@@ -10,7 +10,7 @@
     <script type="text/javascript" src="js/script.min.js?v=21"></script>
     <script type="text/javascript" src="js/common.min.js?v=75"></script>
     <link rel="stylesheet" type="text/css" href="css/food.min.css?v=73" />
-    <script type="text/javascript" src="js/food.min.js?v=234"></script>
+    <script type="text/javascript" src="js/food.min.js?v=235"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=173" />
     <script>
         $(function () {
@@ -443,7 +443,19 @@
                                 <input type="checkbox" id="chk-chef-apply-equips" data-toggle="toggle" data-on="厨具加成开"
                                     data-off="厨具加成关" data-onstyle="default" data-width="105px" checked>
                             </div>
-                            <div class="inline-wrapper" data-toggle="tooltip" title="是否使用修炼加成">
+                            <div class="inline-wrapper select-wrapper chef-apply-equips" data-toggle="tooltip" title="选择应用厨具">
+                                <select id="chk-chef-apply-equip-select" class="selectpicker monitor-none"
+                                    data-width="130px" data-dropdown-align-right='auto' 
+                                    data-none-selected-text="应用厨具"
+                                    data-live-search="true" data-live-search-placeholder="查找"
+                                    data-none-results-text="没有找到"
+                                    data-actions-box="true" data-actions-box-only-clear="true"
+                                    data-deselect-all-text="清空">
+                                    <option value="" selected class="hidden"></option>
+                                </select>
+                            </div>
+                            <div class="inline-wrapper" data-toggle="tooltip" title="是否使用修炼加成"></div>
+                            <div class="inline-wrapper" data-toggle="tooltip" title="是否使用修炼加成"></div>
                                 <input type="checkbox" id="chk-chef-apply-ultimate" data-toggle="toggle" data-on="修炼加成开"
                                     data-off="修炼加成关" data-onstyle="default" data-width="105px" checked>
                             </div>
