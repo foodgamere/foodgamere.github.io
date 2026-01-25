@@ -1541,7 +1541,7 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     border-radius: 6px;
     margin-bottom: 10px;
     /* 与 .selected-item-wrapper 完全相同的宽度设置 */
-    max-width: 1310px;
+    max-width: 1190px;
     margin-left: auto;
     margin-right: auto;
     display: flex;
@@ -1761,13 +1761,12 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     
     /* 小屏幕下调整按钮样式 */
     #sync-guest-double {
-        font-size: 11px;
-        padding: 4px 8px;
+        font-size: 12px;
+        padding: 5px 10px;
         height: auto;
-        min-height: 28px;
-        white-space: normal;
-        word-break: keep-all;
-        max-width: 100%;
+        min-height: 30px;
+        white-space: nowrap;
+        width: 100%;
     }
     
     /* 确保包含按钮的容器不会超出 */
@@ -1780,20 +1779,41 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         min-width: 0;
         max-width: 100%;
     }
+    
+    /* 让按钮所在的容器占满整行 */
+    .calc-result-row.calc-data-row .calc-result-item:last-child {
+        grid-column: 1 / -1;
+        justify-content: center;
+    }
 }
 
-/* 超小屏幕（宽度小于400px）进一步调整 */
-@media (max-width: 400px) {
-    #sync-guest-double {
-        font-size: 10px;
-        padding: 3px 6px;
-    }
-    
+/* 超小屏幕（宽度小于450px）进一步调整 */
+@media (max-width: 450px) {
+    /* 改为2列布局 */
     .calc-result-row.calc-data-row {
         grid-template-columns: 1fr 1fr;
     }
     
+    /* 按钮独占一行 */
     .calc-result-row.calc-data-row .calc-result-item:last-child {
         grid-column: 1 / -1;
+        justify-content: center;
     }
+    
+    #sync-guest-double {
+        font-size: 13px;
+        padding: 6px 12px;
+        width: auto;
+        max-width: 90%;
+    }
+}
+
+
+/* 隐藏贵客率计算页面中的调料选择框*/
+#pane-cal-custom.guest-rate-mode .condiment-box {
+    display: none !important
+}
+
+#pane-cal-custom.guest-rate-mode .recipe-box .recipe-condiment {
+    display: none !important
 }
