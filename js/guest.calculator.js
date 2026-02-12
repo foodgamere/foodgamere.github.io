@@ -374,15 +374,16 @@ var GuestRateCalculator = (function($) {
                 
                 // 在碰瓷查询模式下，显示当前品级对应的碰瓷贵客
                 if (isGuestRateMode() && isPengciMode && a.guests && a.guests.length > 0) {
-                    // 获取当前品级对应的碰瓷贵客
-                    // rankDisp: 可=1, 优=2, 特=3, 神=4, 传=5
+                    // 获取菜谱当前个人品级对应的碰瓷贵客
+                    // a.rank: 菜谱个人数据中的品级（可/优/特/神/传）
                     // guests[0]=优级贵客, guests[1]=特级贵客, guests[2]=神级贵客
                     var currentRank = 0;
-                    if (e.rankDisp === '可') currentRank = 1;
-                    else if (e.rankDisp === '优') currentRank = 2;
-                    else if (e.rankDisp === '特') currentRank = 3;
-                    else if (e.rankDisp === '神') currentRank = 4;
-                    else if (e.rankDisp === '传') currentRank = 5;
+                    var personalRank = a.rank || '可';
+                    if (personalRank === '可') currentRank = 1;
+                    else if (personalRank === '优') currentRank = 2;
+                    else if (personalRank === '特') currentRank = 3;
+                    else if (personalRank === '神') currentRank = 4;
+                    else if (personalRank === '传') currentRank = 5;
                     
                     // 找到下一个可碰瓷的贵客（当前品级+1对应的贵客）
                     // 优级(2)对应guests[0], 特级(3)对应guests[1], 神级(4)对应guests[2]
