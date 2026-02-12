@@ -4912,26 +4912,6 @@ function canAmberHelpDeficit(amber, deficitSkills) {
     return false;
 }
 
-// ==================== 清空功能 ====================
-
-/**
- * 清空场上所有已选的厨师、厨具、调料、菜谱
- */
-function clearAllSelectedOnField(gameData) {
-    var rule = calCustomRule.rules[0];
-    if (!rule || !rule.custom) return;
-    
-    for (var i = 0; i < 3; i++) {
-        setCustomChef(0, i, null);
-        setCustomEquip(0, i, null);
-        setCustomCondiment(0, i, null, gameData);
-        for (var j = 0; j < 3; j++) {
-            setCustomRecipe(0, i, j, null);
-        }
-    }
-    
-    calCustomResults(gameData);
-}
 
 
 /**

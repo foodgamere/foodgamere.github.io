@@ -247,13 +247,24 @@ var GuestRateCalculator = (function($) {
         // 初始化菜谱选择框的分类标签
         initChefCategoryTabs('recipe');
         
-        // 给所有份数输入框添加验证
-        $("#quantity-value, #quantity-value-2, #quantity-value-3").on("input change", function() {
+        // 给主菜谱份数输入框添加验证（最小值1）
+        $("#quantity-value").on("input change", function() {
             validateQuantity($(this));
             // 触发正常营业计算，这会调用 updateCalSummaryDisplay 并更新贵客率计算器
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
             }
+        });
+        
+        // 给双菜谱份数输入框添加验证（最小值0），不触发 calCustomResults
+        $("#quantity-value-2, #quantity-value-3").on("input change", function() {
+            var val = parseInt($(this).val());
+            if (isNaN(val) || val < 0) {
+                $(this).val(0);
+            } else if (val > 999) {
+                $(this).val(999);
+            }
+            calculateDualRecipe();
         });
         
         // 给贵客率输入框添加验证
@@ -306,7 +317,7 @@ var GuestRateCalculator = (function($) {
         $("#quantity-minus-2").off("click").on("click", function() {
             var input = $("#quantity-value-2");
             var val = parseInt(input.val()) || 0;
-            if (val > 1) {
+            if (val > 0) {
                 input.val(val - 1);
                 calculateDualRecipe();
             }
@@ -323,7 +334,7 @@ var GuestRateCalculator = (function($) {
         $("#quantity-minus-3").off("click").on("click", function() {
             var input = $("#quantity-value-3");
             var val = parseInt(input.val()) || 0;
-            if (val > 1) {
+            if (val > 0) {
                 input.val(val - 1);
                 calculateDualRecipe();
             }
@@ -346,8 +357,8 @@ var GuestRateCalculator = (function($) {
             }
         });
         
-        // 监听同贵客双菜谱区域的输入变化
-        $("#guest-rate-input, #star-level-2, #quantity-value-2, #star-level-3, #quantity-value-3").on("change input", function() {
+        // 监听同贵客双菜谱区域的输入变化（份数输入框已在上方单独绑定）
+        $("#guest-rate-input, #star-level-2, #star-level-3").on("change input", function() {
             calculateDualRecipe();
         });
         

@@ -9,11 +9,12 @@
     <link rel="stylesheet" type="text/css" href="css/style.min.css?v=7" />
     <script type="text/javascript" src="js/script.min.js?v=22"></script>
     <script type="text/javascript" src="js/common.min.js?v=76"></script>
-    <link rel="stylesheet" type="text/css" href="css/food.min.css?v=76" />
+    <link rel="stylesheet" type="text/css" href="css/food.min.css?v=77" />
     <script type="text/javascript" src="js/guest.calculator.js?v=3"></script>
     <script type="text/javascript" src="js/query.guest.js?v=2"></script>
-    <script type="text/javascript" src="js/food.min.js?v=252"></script>
-    <script type="text/javascript" src="js/query.cultivate.js?v=3"></script>
+    <script type="text/javascript" src="js/food.min.js?v=253"></script>
+    <script type="text/javascript" src="js/query.cultivate.js?v=4"></script>
+    <script type="text/javascript" src="js/banquet.optimizer.js?v=1"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=173" />
     <script>
         $(function () {
@@ -2081,6 +2082,36 @@
                 <div id="pane-cal-rules" class='pane-cal-rules pane-cal-sub hidden'>
                     <div id="pane-cal-custom">
                         <div class="cal-custom-item">
+                            <div class="banquet-auto-calc hidden" id="banquet-auto-calc" style="max-width: 1130px; margin: 0 auto 8px;">
+                                <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
+                                    <select id="select-banquet-level" class="selectpicker" data-width="auto" data-style="btn-default">
+                                        <option value="0">省</option>
+                                        <option value="1">州</option>
+                                        <option value="2">郡</option>
+                                        <option value="3">县</option>
+                                        <option value="4">村</option>
+                                    </select>
+                                </div>
+                                <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
+                                    <select id="select-banquet-guest" class="selectpicker" data-width="auto" data-style="btn-default">
+                                        <option value="all">双贵客</option>
+                                    </select>
+                                </div>
+                                <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
+                                    <select id="select-banquet-tier" class="selectpicker" data-width="auto" data-style="btn-default">
+                                        <option value="-1">不限分数</option>
+                                    </select>
+                                </div>
+                                <button id="btn-banquet-auto" class="btn btn-primary" type="button">
+                                    自动计算
+                                </button>
+                            </div>
+                            <div id="banquet-progress-wrapper" class="hidden" style="max-width: 1130px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px;">
+                                <div style="flex: 1; height: 8px; background: #e8e8e8; border-radius: 4px; overflow: hidden;">
+                                    <div id="banquet-progress-bar" style="width: 0%; height: 100%; background: #4a90d9; border-radius: 4px; transition: width 0.3s;"></div>
+                                </div>
+                                <span id="banquet-progress-text" style="white-space: nowrap; font-size: 13px; color: #666;">0%</span>
+                            </div>
                             <div class="rule-desc"></div>
                             
                             <!-- 贵客率计算结果区域 -->
