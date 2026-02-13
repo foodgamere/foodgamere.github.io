@@ -1346,6 +1346,12 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         font-size:12px
     }
 
+    #cultivation-mode-switch-wrapper .toggle.btn,
+    #guest-query-mode-switch-wrapper .toggle.btn {
+        width: 80px !important;
+        min-width: 80px !important;
+    }
+
     .nav-tabs>li>a {
         padding: 8px
     }
@@ -1623,28 +1629,292 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     display: inline !important;
 }
 
-/* 未修炼厨师选择框按钮中只显示厨师名字，隐藏星级和其他内容 */
-#unultimated-chef-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner > div {
-    line-height: normal !important;
-    padding: 0 !important;
-    border-bottom: none !important;
-}
-#unultimated-chef-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner .subtext,
-#unultimated-chef-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner br,
-#unultimated-chef-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner span:not(.name) {
-    display: none !important;
+/* ========== 修炼查询自定义下拉框样式（与碰瓷下拉框一致） ========== */
+.unultimated-dropdown-wrapper {
+    position: relative;
+    display: inline-block;
 }
 
-/* 菜谱神级方案查询选择框按钮中只显示菜谱名字，隐藏星级和技法信息 */
-#recipe-god-query-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner > div {
-    line-height: normal !important;
-    padding: 0 !important;
-    border-bottom: none !important;
+.unultimated-dropdown-wrapper .pengci-dropdown-toggle {
+    min-width: 120px;
+    width: 120px;
 }
-#recipe-god-query-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner .subtext,
-#recipe-god-query-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner br,
-#recipe-god-query-wrapper .bootstrap-select .dropdown-toggle .filter-option-inner-inner span:not(.name) {
-    display: none !important;
+
+.unultimated-dropdown-wrapper.open .pengci-dropdown-toggle {
+    background-color: #e6e6e6;
+    border-color: #adadad;
+}
+
+.unultimated-dropdown-wrapper.open .pengci-dropdown-toggle .caret {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+#unultimated-dropdown-menu {
+    min-width: 300px;
+    max-width: 380px;
+}
+
+#unultimated-dropdown-menu .unultimated-search-wrapper {
+    padding: 8px 10px;
+}
+
+#unultimated-dropdown-menu .unultimated-search-wrapper input {
+    width: 100%;
+    border-radius: 4px;
+}
+
+#unultimated-dropdown-menu .unultimated-clear-wrapper {
+    padding: 4px 10px;
+    text-align: center;
+}
+
+#unultimated-dropdown-menu .unultimated-clear-wrapper .btn {
+    width: 100%;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-list {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    margin: 0;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item:hover {
+    background-color: #f5f5f5;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item.selected {
+    background-color: #d9edf7;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item .chef-check {
+    width: 18px;
+    height: 18px;
+    border: 2px solid #ccc;
+    border-radius: 3px;
+    margin-right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item.selected .chef-check {
+    background-color: #337ab7;
+    border-color: #337ab7;
+    color: #fff;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item .chef-info {
+    flex: 1;
+    min-width: 0;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item .chef-name {
+    font-weight: 700;
+    color: #555;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item .chef-detail {
+    font-size: 11px;
+    color: #777;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#unultimated-dropdown-menu .unultimated-chef-item .chef-rarity {
+    font-size: 11px;
+    color: #999;
+    margin-left: 5px;
+}
+
+#unultimated-dropdown-menu .unultimated-max-tip {
+    text-align: center;
+    padding: 5px;
+    color: #d9534f;
+    font-size: 12px;
+    display: none;
+}
+
+/* 窄屏幕适配 - 与碰瓷下拉框一致 */
+@media (max-width: 1310px) {
+    .unultimated-dropdown-wrapper.open #unultimated-dropdown-menu {
+        position: fixed;
+        left: 10px;
+        top: 35px;
+        transform: none;
+        z-index: 2000;
+    }
+}
+
+@media (max-width: 767px) {
+    #unultimated-dropdown-menu {
+        min-width: 280px;
+        max-width: calc(100vw - 40px);
+    }
+    .unultimated-dropdown-wrapper .pengci-dropdown-toggle {
+        min-width: 100px;
+        width: 100px;
+        font-size: 12px;
+        height: 30px;
+    }
+}
+
+/* 未修炼厨师下拉框分类标签样式 */
+.unultimated-category-tabs {
+    margin: 5px 10px !important;
+    border-bottom: 1px solid #ddd !important;
+    display: flex !important;
+    list-style: none !important;
+    padding: 0 !important;
+}
+
+.unultimated-category-tabs li {
+    flex: 1 !important;
+    text-align: center !important;
+}
+
+.unultimated-category-tabs li a {
+    padding: 5px 8px !important;
+    display: block !important;
+    font-size: 12px !important;
+    color: #555 !important;
+    text-decoration: none !important;
+    border: none !important;
+    background: none !important;
+    cursor: pointer !important;
+}
+
+.unultimated-category-tabs li a:hover {
+    color: #337ab7 !important;
+}
+
+.unultimated-category-tabs li.active a {
+    color: #337ab7 !important;
+    font-weight: bold !important;
+    border-bottom: 2px solid #337ab7 !important;
+}
+
+/* 菜谱神级方案查询 - 自定义下拉框样式 */
+.recipe-god-dropdown-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.recipe-god-dropdown-wrapper .pengci-dropdown-toggle {
+    min-width: 120px;
+    width: 120px;
+}
+
+.recipe-god-dropdown-wrapper.open .pengci-dropdown-toggle {
+    background-color: #e6e6e6;
+    border-color: #adadad;
+}
+
+.recipe-god-dropdown-wrapper.open .pengci-dropdown-toggle .caret {
+    transform: translateY(-50%) rotate(180deg);
+}
+
+#recipe-god-dropdown-menu {
+    min-width: 300px;
+    max-width: 380px;
+}
+
+#recipe-god-dropdown-menu .recipe-god-search-wrapper {
+    padding: 8px 10px;
+}
+
+#recipe-god-dropdown-menu .recipe-god-search-wrapper input {
+    width: 100%;
+    border-radius: 4px;
+}
+
+#recipe-god-dropdown-menu .recipe-god-filter-wrapper {
+    padding: 4px 10px;
+    text-align: center;
+}
+
+#recipe-god-dropdown-menu .recipe-god-filter-wrapper .btn {
+    width: 100%;
+    font-size: 12px;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-list {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    margin: 0;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 15px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item:hover {
+    background-color: #f5f5f5;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item.selected {
+    background-color: #d9edf7;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item .recipe-info {
+    flex: 1;
+    min-width: 0;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item .recipe-name {
+    font-weight: 700;
+    color: #555;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item .recipe-rarity {
+    font-size: 11px;
+    color: #999;
+    margin-left: 5px;
+}
+
+#recipe-god-dropdown-menu .recipe-god-recipe-item .recipe-skill {
+    font-size: 11px;
+    color: #777;
+    margin-left: 5px;
+}
+
+/* 窄屏幕适配 - 与碰瓷下拉框一致 */
+@media (max-width: 1310px) {
+    .recipe-god-dropdown-wrapper.open #recipe-god-dropdown-menu {
+        position: fixed;
+        left: 10px;
+        top: 35px;
+        transform: none;
+        z-index: 2000;
+    }
+}
+
+@media (max-width: 767px) {
+    #recipe-god-dropdown-menu {
+        min-width: 280px;
+        max-width: calc(100vw - 40px);
+    }
+    .recipe-god-dropdown-wrapper .pengci-dropdown-toggle {
+        min-width: 100px;
+        width: 100px;
+        font-size: 12px;
+        height: 30px;
+    }
 }
 
 

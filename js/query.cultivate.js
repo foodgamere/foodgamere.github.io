@@ -2428,6 +2428,18 @@ function filterCultivationChefs($select, selectId, categoryName, isGodMode) {
 // 保存gameData的全局引用，供其他函数使用
 var cultivationGameData = null;
 
+// 已选中的未修炼厨师ID数组（自定义下拉框用）
+var selectedUnultimatedChefIds = [];
+
+// 未修炼厨师下拉框当前分类
+var unultimatedDropdownCategory = 'unultimated';
+
+// 最大可选厨师数
+var MAX_UNULTIMATED_CHEFS = 3;
+
+// 已选中的菜谱神级方案菜谱ID（自定义下拉框用，单选）
+var selectedRecipeGodId = '';
+
 /**
  * 初始化未修炼厨师下拉框功能
  * 注意：显示/隐藏逻辑已在 loadCalRule 中处理，这里只负责初始化数据和事件
@@ -2444,7 +2456,10 @@ function initUnultimatedChefDropdown(gameData) {
         return;
     }
     
-    // 刷新未修炼厨师列表
+    // 初始化自定义下拉框交互
+    initUnultimatedDropdownEvents();
+    
+    // 刷新未修炼厨师列表（构建下拉菜单内容）
     refreshUnultimatedChefList(gameData);
     
     // 初始化配置开关状态（从本地存储读取）
@@ -2456,6 +2471,125 @@ function initUnultimatedChefDropdown(gameData) {
     // 弹窗显示时移除配置按钮焦点
     $("#unultimated-config-modal").off("shown.bs.modal").on("shown.bs.modal", function() {
         $("#btn-unultimated-config").blur();
+    });
+}
+
+/**
+ * 初始化未修炼厨师自定义下拉框交互事件（参考碰瓷下拉框 initPengciGuestSelect）
+ */
+function initUnultimatedDropdownEvents() {
+    var $wrapper = $("#unultimated-dropdown-wrapper");
+    var $btn = $("#unultimated-dropdown-btn");
+    var $menu = $("#unultimated-dropdown-menu");
+    var $container = $("#unultimated-select-container");
+    
+    if (!$wrapper.length || !$btn.length || !$menu.length || !$container.length) {
+        return;
+    }
+    
+    // 计算下拉菜单最大高度（参考碰瓷下拉框的 calculateMenuHeight）
+    function calculateMenuHeight() {
+        var $list = $container.find('.unultimated-chef-list');
+        var $searchWrapper = $container.find('.unultimated-search-wrapper');
+        var $clearWrapper = $container.find('.unultimated-clear-wrapper');
+        var $tabs = $container.find('.unultimated-category-tabs');
+        var $maxTip = $container.find('.unultimated-max-tip');
+        
+        var btnOffset = $btn.offset();
+        var btnHeight = $btn.outerHeight();
+        var windowHeight = $(window).height();
+        var scrollTop = $(window).scrollTop();
+        
+        var selectOffsetTop = btnOffset.top - scrollTop;
+        var selectOffsetBot = windowHeight - selectOffsetTop - btnHeight;
+        
+        var menuBorderVert = 2;
+        var headerHeight = 0;
+        if ($searchWrapper.length && $searchWrapper.is(':visible')) {
+            headerHeight += $searchWrapper.outerHeight(true);
+        }
+        if ($clearWrapper.length && $clearWrapper.is(':visible')) {
+            headerHeight += $clearWrapper.outerHeight(true);
+        }
+        if ($tabs.length && $tabs.is(':visible')) {
+            headerHeight += $tabs.outerHeight(true);
+        }
+        if ($maxTip.length && $maxTip.is(':visible')) {
+            headerHeight += $maxTip.outerHeight(true);
+        }
+        
+        var menuExtrasVert = menuBorderVert + headerHeight;
+        var availableHeight = selectOffsetBot - menuExtrasVert - 10;
+        var minHeight = 120;
+        var listMaxHeight = Math.max(minHeight, availableHeight);
+        
+        $list.css('max-height', listMaxHeight + 'px');
+        var menuMaxHeight = listMaxHeight + headerHeight + menuBorderVert;
+        $menu.css('max-height', menuMaxHeight + 'px');
+    }
+    
+    // 点击按钮切换下拉菜单
+    $btn.off("click").on("click", function(e) {
+        e.stopPropagation();
+        if ($menu.is(":visible")) {
+            $menu.hide();
+            $wrapper.removeClass("open");
+        } else {
+            // 关闭其他 Bootstrap-select 选择框
+            $('.bootstrap-select').removeClass('open');
+            $('.bootstrap-select .dropdown-menu').css('display', '');
+            $('.bootstrap-select .dropdown-toggle').blur();
+            $('.selected-box').removeClass('editing');
+            
+            // 关闭碰瓷下拉框
+            $(".pengci-guest-dropdown-wrapper").removeClass("open");
+            $("#pengci-guest-dropdown-menu").hide();
+            $(".pengci-rune-dropdown-wrapper").removeClass("open");
+            $("#pengci-rune-select-container").css('display', '');
+            
+            // 关闭菜谱神级方案下拉框
+            $("#recipe-god-dropdown-wrapper").removeClass("open");
+            $("#recipe-god-dropdown-menu").hide();
+            
+            $wrapper.addClass("open");
+            
+            $menu.css({
+                'visibility': 'hidden',
+                'display': 'block'
+            });
+            calculateMenuHeight();
+            $menu.css('visibility', '');
+        }
+    });
+    
+    // 窗口大小变化或滚动时重新计算高度
+    $(window).off("resize.unultimatedDropdown scroll.unultimatedDropdown").on("resize.unultimatedDropdown scroll.unultimatedDropdown", function() {
+        if ($menu.is(":visible")) {
+            calculateMenuHeight();
+        }
+    });
+    
+    // 点击下拉菜单内部不关闭
+    $menu.off("click").on("click", function(e) {
+        e.stopPropagation();
+    });
+    
+    // 点击外部关闭下拉菜单
+    $(document).off("click.unultimatedDropdown").on("click.unultimatedDropdown", function(e) {
+        if (!$(e.target).closest("#unultimated-dropdown-wrapper").length) {
+            if ($menu.is(":visible")) {
+                $menu.hide();
+                $wrapper.removeClass("open");
+            }
+        }
+    });
+    
+    // 监听其他 Bootstrap-select 选择框打开时，关闭本下拉框
+    $(document).off("show.bs.select.unultimatedDropdown").on("show.bs.select.unultimatedDropdown", function(e) {
+        if ($menu.is(":visible")) {
+            $menu.hide();
+            $wrapper.removeClass("open");
+        }
     });
 }
 
@@ -2501,7 +2635,8 @@ function saveUnultimatedConfig() {
 }
 
 /**
- * 刷新未修炼厨师列表
+ * 刷新未修炼厨师列表（构建自定义下拉菜单内容）
+ * 参考碰瓷下拉框的 buildPengciGuestDropdown
  */
 function refreshUnultimatedChefList(gameData) {
     var rule = calCustomRule.rules[0];
@@ -2511,52 +2646,65 @@ function refreshUnultimatedChefList(gameData) {
     var configIds = getConfigUltimatedChefIds();
     var gotChecked = $("#chk-cal-got").prop("checked");
     
-    // 获取当前已选中的厨师ID（转为字符串Set便于查找）
-    var selectedIds = $("#select-cal-unultimated-chef").val() || [];
-    var selectedSet = {};
-    for (var s = 0; s < selectedIds.length; s++) {
-        selectedSet[String(selectedIds[s])] = true;
-    }
+    // 保留有效的已选ID
+    var validSelectedIds = [];
     
     var list = [];
-    var validSelectedIds = []; // 过滤后仍然有效的已选ID
     
     for (var i = 0; i < rule.chefs.length; i++) {
         var chef = rule.chefs[i];
         
         if (chef.chefId == 285) continue;
         
+        // 判断分类
+        var isUnultimated = !isChefUltimated(chef.chefId, localData, configIds);
+        var isAura = false;
+        if (chef.ultimateSkillEffect) {
+            // 检查是否已勾选为光环厨师
+            var enabledChefIds = $("#chk-cal-partial-ultimate").val() || [];
+            var isEnabled = false;
+            for (var ei = 0; ei < enabledChefIds.length; ei++) {
+                if (Number(enabledChefIds[ei]) === chef.chefId) {
+                    isEnabled = true;
+                    break;
+                }
+            }
+            if (isEnabled) {
+                for (var k = 0; k < chef.ultimateSkillEffect.length; k++) {
+                    var effect = chef.ultimateSkillEffect[k];
+                    var isSkillType = effect.type === "Stirfry" || effect.type === "Boil" || 
+                                      effect.type === "Knife" || effect.type === "Fry" || 
+                                      effect.type === "Bake" || effect.type === "Steam";
+                    if ((effect.condition === "Next" || effect.condition === "Partial") && isSkillType) {
+                        isAura = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
         // 勾选已有，只显示已有且未修炼的厨师
         if (gotChecked) {
             var isOwned = chef.got || (configIds.allSet && configIds.allSet[String(chef.chefId)]);
             if (!isOwned) continue;
-            // 跳过已修炼的
-            if (isChefUltimated(chef.chefId, localData, configIds)) continue;
+            // 跳过已修炼的（除非是光环厨师）
+            if (!isUnultimated && !isAura) continue;
         }
         
         // 标记是否已选中
-        var isSelected = selectedSet[String(chef.chefId)] === true;
-        chef._isSelected = isSelected;
-        if (isSelected) {
-            validSelectedIds.push(String(chef.chefId));
+        var isSelected = false;
+        for (var si = 0; si < selectedUnultimatedChefIds.length; si++) {
+            if (String(selectedUnultimatedChefIds[si]) === String(chef.chefId)) {
+                isSelected = true;
+                validSelectedIds.push(String(chef.chefId));
+                break;
+            }
         }
-        list.push(chef);
-    }
-    
-    // 排序：已选中的优先，然后按星级降序
-    list.sort(function(a, b) {
-        if (a._isSelected !== b._isSelected) {
-            return a._isSelected ? -1 : 1;
-        }
-        return b.rarity - a.rarity;
-    });
-    
-    // 生成选项，使用data-content显示厨师名、星级、修炼任务和修炼技能（换行显示）
-    var html = '';
-    for (var j = 0; j < list.length; j++) {
+        
+        // 获取修炼任务描述
         var questDesc = '';
-        if (list[j].ultimateGoal && list[j].ultimateGoal.length > 0 && cultivationGameData && cultivationGameData.quests) {
-            var questId = list[j].ultimateGoal[0];
+        if (chef.ultimateGoal && chef.ultimateGoal.length > 0 && cultivationGameData && cultivationGameData.quests) {
+            var questId = chef.ultimateGoal[0];
             for (var q = 0; q < cultivationGameData.quests.length; q++) {
                 if (cultivationGameData.quests[q].questId === questId) {
                     questDesc = cultivationGameData.quests[q].goal || '';
@@ -2564,117 +2712,204 @@ function refreshUnultimatedChefList(gameData) {
                 }
             }
         }
+        
         // 获取修炼技能描述
-        var skillDesc = list[j].ultimateSkillDisp ? list[j].ultimateSkillDisp.replace(/<br>/g, ' ') : '';
+        var skillDesc = chef.ultimateSkillDisp ? chef.ultimateSkillDisp.replace(/<br>/g, ' ') : '';
         
-        var contentHtml = '<div style="line-height:1.3;padding:5px 0;border-bottom:1px solid #eee;">' +
-                          '<span class="name">' + list[j].name + '</span>' +
-                          '<span class="subtext" style="margin-left:5px;">' + list[j].rarityDisp + '</span>';
-        if (questDesc) {
-            contentHtml += '<br><span style="color:#888;font-size:11px;">' + questDesc + '</span>';
-        }
-        if (skillDesc) {
-            contentHtml += '<br><span style="color:#337ab7;font-size:11px;">' + skillDesc + '</span>';
-        }
-        contentHtml += '</div>';
-        html += '<option value="' + list[j].chefId + '" data-content="' + contentHtml.replace(/"/g, '&quot;') + '" data-tokens="' + list[j].name + '">' + list[j].name + '</option>';
+        list.push({
+            chefId: chef.chefId,
+            name: chef.name,
+            rarity: chef.rarity,
+            rarityDisp: chef.rarityDisp || '',
+            questDesc: questDesc,
+            skillDesc: skillDesc,
+            isSelected: isSelected,
+            isUnultimated: isUnultimated,
+            isAura: isAura
+        });
     }
     
-    $("#select-cal-unultimated-chef").html(html).selectpicker("destroy").selectpicker({
-        selectedTextFormat: 'count',
-        countSelectedText: '{0}个厨师'
+    // 更新已选ID（移除无效的）
+    selectedUnultimatedChefIds = validSelectedIds;
+    
+    // 排序：已选中的优先，然后按星级降序
+    list.sort(function(a, b) {
+        if (a.isSelected !== b.isSelected) {
+            return a.isSelected ? -1 : 1;
+        }
+        return b.rarity - a.rarity;
     });
     
-    // 恢复选中状态（只恢复过滤后仍有效的）
-    if (validSelectedIds.length > 0) {
-        $("#select-cal-unultimated-chef").selectpicker('val', validSelectedIds);
+    // 构建HTML
+    var $container = $("#unultimated-select-container");
+    var html = '';
+    
+    // 搜索框
+    html += '<div class="unultimated-search-wrapper">';
+    html += '<input type="text" class="form-control unultimated-search-input" placeholder="查找厨师">';
+    html += '</div>';
+    
+    // 清空选择按钮
+    html += '<div class="unultimated-clear-wrapper">';
+    html += '<button type="button" class="btn btn-default btn-sm btn-unultimated-clear">清空已选</button>';
+    html += '</div>';
+    
+    // 分类标签
+    html += '<ul class="nav nav-tabs unultimated-category-tabs">';
+    html += '<li class="' + (unultimatedDropdownCategory === 'unultimated' ? 'active' : '') + '"><a href="#" data-category="unultimated">未修炼</a></li>';
+    html += '<li class="' + (unultimatedDropdownCategory === 'all' ? 'active' : '') + '"><a href="#" data-category="all">全部</a></li>';
+    html += '</ul>';
+    
+    // 最大选择提示
+    html += '<div class="unultimated-max-tip">最多选择' + MAX_UNULTIMATED_CHEFS + '个厨师</div>';
+    
+    // 厨师列表
+    html += '<div class="unultimated-chef-list">';
+    for (var j = 0; j < list.length; j++) {
+        var item = list[j];
+        var selectedClass = item.isSelected ? ' selected' : '';
+        
+        html += '<div class="unultimated-chef-item' + selectedClass + '" data-chef-id="' + item.chefId + '" data-name="' + item.name + '" data-is-unultimated="' + (item.isUnultimated ? '1' : '0') + '" data-is-aura="' + (item.isAura ? '1' : '0') + '">';
+        html += '<div class="chef-check">' + (item.isSelected ? '✓' : '') + '</div>';
+        html += '<div class="chef-info">';
+        html += '<span class="chef-name">' + item.name + '</span>';
+        html += '<span class="chef-rarity">' + item.rarityDisp + '</span>';
+        if (item.questDesc) {
+            html += '<div class="chef-detail" title="' + item.questDesc.replace(/"/g, '&quot;') + '">' + item.questDesc + '</div>';
+        }
+        if (item.skillDesc) {
+            html += '<div class="chef-detail" style="color:#337ab7;" title="' + item.skillDesc.replace(/"/g, '&quot;') + '">' + item.skillDesc + '</div>';
+        }
+        html += '</div>';
+        html += '</div>';
     }
+    html += '</div>';
     
-    // 在下拉框内添加清空按钮
-    addClearButtonToUnultimatedDropdown();
+    $container.html(html);
     
-    // 重新绑定选择变化事件（selectpicker destroy后需要重新绑定）
-    $("#select-cal-unultimated-chef").off("changed.bs.select").on("changed.bs.select", function() {
-        refreshUnultimatedChefSort();
-    });
+    // 绑定事件
+    bindUnultimatedDropdownEvents($container);
+    
+    // 更新按钮文字
+    updateUnultimatedDropdownText();
 }
 
 /**
- * 在未修炼厨师下拉框内添加清空按钮
+ * 绑定未修炼厨师下拉菜单内部事件
  */
-function addClearButtonToUnultimatedDropdown() {
-    var $dropdown = $("#select-cal-unultimated-chef").closest(".bootstrap-select").find(".dropdown-menu");
-    
-    // 如果已经有清空按钮，先移除
-    $dropdown.find(".unultimated-clear-btn").remove();
-    
-    // 在搜索框后面添加清空按钮
-    var $searchBox = $dropdown.find(".bs-searchbox");
-    if ($searchBox.length) {
-        var clearBtn = '<div class="unultimated-clear-btn" style="padding: 3px 8px; border-bottom: 1px solid #ddd;">' +
-            '<button type="button" class="btn btn-default btn-xs btn-block" style="font-size: 12px;">清空已选</button>' +
-            '</div>';
-        $searchBox.after(clearBtn);
+function bindUnultimatedDropdownEvents($container) {
+    // 分类标签点击事件
+    $container.find('.unultimated-category-tabs a').off('click').on('click', function(e) {
+        e.preventDefault();
+        var $tab = $(this);
+        var category = $tab.attr('data-category');
         
-        // 绑定点击事件
-        $dropdown.find(".unultimated-clear-btn button").off("click").on("click", function(e) {
-            e.stopPropagation();  // 阻止事件冒泡，防止关闭下拉框
-            $("#select-cal-unultimated-chef").selectpicker('deselectAll');
-            refreshUnultimatedChefSort();
-        });
-    }
-}
-
-/**
- * 刷新未修炼厨师下拉框排序（已选中的优先显示）
- */
-var isRefreshingUnultimatedChefSort = false;
-function refreshUnultimatedChefSort() {
-    if (isRefreshingUnultimatedChefSort) return;
-    isRefreshingUnultimatedChefSort = true;
+        $tab.parent().addClass('active').siblings().removeClass('active');
+        unultimatedDropdownCategory = category;
+        
+        filterUnultimatedChefItems($container, category);
+    });
     
-    try {
-        var $select = $("#select-cal-unultimated-chef");
-        var selectedValues = $select.val() || [];
-        var selectedSet = {};
-        for (var s = 0; s < selectedValues.length; s++) {
-            selectedSet[String(selectedValues[s])] = true;
-        }
+    // 搜索框输入事件
+    $container.find('.unultimated-search-input').off('input').on('input', function() {
+        var keyword = $(this).val().toLowerCase();
+        filterUnultimatedChefByKeyword($container, keyword);
+    });
+    
+    // 厨师项点击事件（选中/取消选中）
+    $container.find('.unultimated-chef-item').off('click').on('click', function() {
+        var $item = $(this);
+        var chefId = String($item.attr('data-chef-id'));
         
-        // 获取所有选项
-        var options = [];
-        $select.find('option').each(function() {
-            var $opt = $(this);
-            options.push({
-                value: $opt.val(),
-                text: $opt.text(),
-                content: $opt.attr('data-content') || '',
-                isSelected: selectedSet[String($opt.val())] === true
-            });
-        });
-        
-        // 排序：已选中的优先
-        options.sort(function(a, b) {
-            if (a.isSelected !== b.isSelected) {
-                return a.isSelected ? -1 : 1;
+        if ($item.hasClass('selected')) {
+            // 取消选中
+            $item.removeClass('selected');
+            $item.find('.chef-check').text('');
+            for (var i = 0; i < selectedUnultimatedChefIds.length; i++) {
+                if (selectedUnultimatedChefIds[i] === chefId) {
+                    selectedUnultimatedChefIds.splice(i, 1);
+                    break;
+                }
             }
-            return 0; // 保持原有顺序
-        });
-        
-        // 清空并重新添加选项
-        $select.empty();
-        for (var i = 0; i < options.length; i++) {
-            var opt = options[i];
-            $select.append('<option value="' + opt.value + '" data-content="' + opt.content.replace(/"/g, '&quot;') + '">' + opt.text + '</option>');
+            // 隐藏最大选择提示
+            $container.find('.unultimated-max-tip').hide();
+        } else {
+            // 检查是否达到最大选择数
+            if (selectedUnultimatedChefIds.length >= MAX_UNULTIMATED_CHEFS) {
+                $container.find('.unultimated-max-tip').show();
+                return;
+            }
+            // 选中
+            $item.addClass('selected');
+            $item.find('.chef-check').text('✓');
+            selectedUnultimatedChefIds.push(chefId);
         }
         
-        // 刷新selectpicker并恢复选中状态
-        $select.selectpicker('refresh');
-        if (selectedValues.length > 0) {
-            $select.selectpicker('val', selectedValues);
+        updateUnultimatedDropdownText();
+    });
+    
+    // 清空选择按钮点击事件
+    $container.find('.btn-unultimated-clear').off('click').on('click', function(e) {
+        e.stopPropagation();
+        selectedUnultimatedChefIds = [];
+        $container.find('.unultimated-chef-item').removeClass('selected');
+        $container.find('.chef-check').text('');
+        $container.find('.unultimated-max-tip').hide();
+        updateUnultimatedDropdownText();
+    });
+    
+    // 应用当前分类过滤
+    filterUnultimatedChefItems($container, unultimatedDropdownCategory);
+}
+
+/**
+ * 按分类过滤厨师列表项
+ */
+function filterUnultimatedChefItems($container, category) {
+    $container.find('.unultimated-chef-item').each(function() {
+        var $item = $(this);
+        if (category === 'all') {
+            $item.show();
+        } else if (category === 'unultimated') {
+            $item.toggle($item.attr('data-is-unultimated') === '1');
         }
-    } finally {
-        isRefreshingUnultimatedChefSort = false;
+    });
+}
+
+/**
+ * 按关键词过滤厨师列表项
+ */
+function filterUnultimatedChefByKeyword($container, keyword) {
+    $container.find('.unultimated-chef-item').each(function() {
+        var $item = $(this);
+        if (!keyword) {
+            // 无关键词时，恢复分类过滤
+            filterUnultimatedChefItems($container, unultimatedDropdownCategory);
+            return false; // break each loop, will be handled by filterUnultimatedChefItems
+        }
+        var name = ($item.attr('data-name') || '').toLowerCase();
+        $item.toggle(name.indexOf(keyword) >= 0);
+    });
+    // 如果keyword为空，上面的return false只退出了each，需要重新调用过滤
+    if (!keyword) {
+        filterUnultimatedChefItems($container, unultimatedDropdownCategory);
+    }
+}
+
+/**
+ * 更新未修炼厨师下拉框按钮文字
+ */
+function updateUnultimatedDropdownText() {
+    var $text = $('#unultimated-dropdown-btn .pengci-dropdown-text');
+    if (selectedUnultimatedChefIds.length === 0) {
+        $text.text('未修炼厨师').removeClass('has-selection');
+    } else if (selectedUnultimatedChefIds.length === 1) {
+        // 显示厨师名
+        var $item = $('#unultimated-select-container .unultimated-chef-item[data-chef-id="' + selectedUnultimatedChefIds[0] + '"]');
+        var name = $item.attr('data-name') || (selectedUnultimatedChefIds.length + '个厨师');
+        $text.text(name).addClass('has-selection');
+    } else {
+        $text.text(selectedUnultimatedChefIds.length + '个厨师').addClass('has-selection');
     }
 }
 
@@ -2687,18 +2922,13 @@ function initUnultimatedQueryButton(gameData) {
     $("#btn-unultimated-query").off("click").on("click", function() {
         queryUnultimatedChefs(gameData);
     });
-    
-    // 选择变化时刷新排序（已选中的优先显示）
-    $("#select-cal-unultimated-chef").off("changed.bs.select").on("changed.bs.select", function() {
-        refreshUnultimatedChefSort();
-    });
 }
 
 /**
  * 未修炼厨师修炼任务查询主函数
  */
 function queryUnultimatedChefs(gameData) {
-    var selectedChefIds = $("#select-cal-unultimated-chef").val();
+    var selectedChefIds = selectedUnultimatedChefIds;
     if (!selectedChefIds || selectedChefIds.length === 0) {
         return;
     }
@@ -4990,9 +5220,11 @@ function initRecipeGodQueryDropdown(gameData) {
     var isCultivateMode = calCustomRule.isCultivate;
     
     if (!isCultivateMode) {
-        // 非修炼查询模式，不需要初始化
         return;
     }
+    
+    // 初始化自定义下拉框交互
+    initRecipeGodDropdownEvents();
     
     // 刷新菜谱列表
     refreshRecipeGodQueryList(gameData);
@@ -5008,6 +5240,117 @@ function initRecipeGodQueryDropdown(gameData) {
         $("#btn-recipe-god-config").blur();
         // 刷新selectpicker
         $("#select-recipe-god-grade").selectpicker("refresh");
+    });
+}
+
+/**
+ * 初始化菜谱神级方案自定义下拉框交互事件（参考未修炼厨师下拉框）
+ */
+function initRecipeGodDropdownEvents() {
+    var $wrapper = $("#recipe-god-dropdown-wrapper");
+    var $btn = $("#recipe-god-dropdown-btn");
+    var $menu = $("#recipe-god-dropdown-menu");
+    var $container = $("#recipe-god-select-container");
+    
+    if (!$wrapper.length || !$btn.length || !$menu.length || !$container.length) {
+        return;
+    }
+    
+    // 计算下拉菜单最大高度
+    function calculateMenuHeight() {
+        var $list = $container.find('.recipe-god-recipe-list');
+        var $searchWrapper = $container.find('.recipe-god-search-wrapper');
+        var $filterWrapper = $container.find('.recipe-god-filter-wrapper');
+        
+        var btnOffset = $btn.offset();
+        var btnHeight = $btn.outerHeight();
+        var windowHeight = $(window).height();
+        var scrollTop = $(window).scrollTop();
+        
+        var selectOffsetTop = btnOffset.top - scrollTop;
+        var selectOffsetBot = windowHeight - selectOffsetTop - btnHeight;
+        
+        var menuBorderVert = 2;
+        var headerHeight = 0;
+        if ($searchWrapper.length && $searchWrapper.is(':visible')) {
+            headerHeight += $searchWrapper.outerHeight(true);
+        }
+        if ($filterWrapper.length && $filterWrapper.is(':visible')) {
+            headerHeight += $filterWrapper.outerHeight(true);
+        }
+        
+        var menuExtrasVert = menuBorderVert + headerHeight;
+        var availableHeight = selectOffsetBot - menuExtrasVert - 10;
+        var minHeight = 120;
+        var listMaxHeight = Math.max(minHeight, availableHeight);
+        
+        $list.css('max-height', listMaxHeight + 'px');
+        var menuMaxHeight = listMaxHeight + headerHeight + menuBorderVert;
+        $menu.css('max-height', menuMaxHeight + 'px');
+    }
+    
+    // 点击按钮切换下拉菜单
+    $btn.off("click").on("click", function(e) {
+        e.stopPropagation();
+        if ($menu.is(":visible")) {
+            $menu.hide();
+            $wrapper.removeClass("open");
+        } else {
+            // 关闭其他 Bootstrap-select 选择框
+            $('.bootstrap-select').removeClass('open');
+            $('.bootstrap-select .dropdown-menu').css('display', '');
+            $('.bootstrap-select .dropdown-toggle').blur();
+            $('.selected-box').removeClass('editing');
+            
+            // 关闭未修炼厨师下拉框
+            $("#unultimated-dropdown-wrapper").removeClass("open");
+            $("#unultimated-dropdown-menu").hide();
+            
+            // 关闭碰瓷下拉框
+            $(".pengci-guest-dropdown-wrapper").removeClass("open");
+            $("#pengci-guest-dropdown-menu").hide();
+            $(".pengci-rune-dropdown-wrapper").removeClass("open");
+            $("#pengci-rune-select-container").css('display', '');
+            
+            $wrapper.addClass("open");
+            
+            $menu.css({
+                'visibility': 'hidden',
+                'display': 'block'
+            });
+            calculateMenuHeight();
+            $menu.css('visibility', '');
+        }
+    });
+    
+    // 窗口大小变化或滚动时重新计算高度
+    $(window).off("resize.recipeGodDropdown scroll.recipeGodDropdown").on("resize.recipeGodDropdown scroll.recipeGodDropdown", function() {
+        if ($menu.is(":visible")) {
+            calculateMenuHeight();
+        }
+    });
+    
+    // 点击下拉菜单内部不关闭
+    $menu.off("click").on("click", function(e) {
+        e.stopPropagation();
+    });
+    
+    // 点击外部关闭下拉菜单
+    $(document).off("click.recipeGodDropdown").on("click.recipeGodDropdown", function(e) {
+        if (!$(e.target).closest("#recipe-god-dropdown-wrapper").length) {
+            if ($menu.is(":visible")) {
+                $menu.hide();
+                $wrapper.removeClass("open");
+            }
+        }
+    });
+    
+    // 监听其他 Bootstrap-select 选择框打开时，关闭本下拉框
+    $(document).off("show.bs.select.recipeGodDropdown").on("show.bs.select.recipeGodDropdown", function(e) {
+        if ($menu.is(":visible")) {
+            $menu.hide();
+            $wrapper.removeClass("open");
+        }
     });
 }
 
@@ -5059,7 +5402,7 @@ function saveRecipeGodConfig() {
 }
 
 /**
- * 刷新菜谱神级方案查询列表
+ * 刷新菜谱神级方案查询列表（构建自定义下拉菜单内容）
  * 单选模式，显示星级（星星图标）和技法值，按最高技法值降序排序
  */
 function refreshRecipeGodQueryList(gameData) {
@@ -5067,9 +5410,6 @@ function refreshRecipeGodQueryList(gameData) {
     if (!rule || !rule.recipes) return;
     
     var gotChecked = $("#chk-cal-got").prop("checked");
-    
-    // 获取当前已选中的菜谱ID
-    var selectedId = $("#select-cal-recipe-god-query").val();
     
     var list = [];
     
@@ -5089,14 +5429,14 @@ function refreshRecipeGodQueryList(gameData) {
             recipe.steam || 0
         );
         
-        // 构建技法显示（参考getSkillDisp函数格式）
+        // 构建技法显示
         var skillDisp = "";
-        if (recipe.stirfry) skillDisp += "<span>炒" + recipe.stirfry + "</span>";
-        if (recipe.boil) skillDisp += "<span>煮" + recipe.boil + "</span>";
-        if (recipe.knife) skillDisp += "<span>切" + recipe.knife + "</span>";
-        if (recipe.fry) skillDisp += "<span>炸" + recipe.fry + "</span>";
-        if (recipe.bake) skillDisp += "<span>烤" + recipe.bake + "</span>";
-        if (recipe.steam) skillDisp += "<span>蒸" + recipe.steam + "</span>";
+        if (recipe.stirfry) skillDisp += "炒" + recipe.stirfry + " ";
+        if (recipe.boil) skillDisp += "煮" + recipe.boil + " ";
+        if (recipe.knife) skillDisp += "切" + recipe.knife + " ";
+        if (recipe.fry) skillDisp += "炸" + recipe.fry + " ";
+        if (recipe.bake) skillDisp += "烤" + recipe.bake + " ";
+        if (recipe.steam) skillDisp += "蒸" + recipe.steam + " ";
         
         // 使用getRarityDisp生成星星图标
         var rarityDisp = getRarityDisp(recipe.rarity);
@@ -5106,7 +5446,7 @@ function refreshRecipeGodQueryList(gameData) {
             name: recipe.name,
             rarity: recipe.rarity,
             maxSkillValue: maxSkillValue,
-            skillDisp: skillDisp,
+            skillDisp: skillDisp.trim(),
             rarityDisp: rarityDisp
         });
     }
@@ -5116,23 +5456,109 @@ function refreshRecipeGodQueryList(gameData) {
         return b.maxSkillValue - a.maxSkillValue;
     });
     
-    // 构建选项HTML（添加隐藏的空选项作为默认值）
-    var html = '<option value="" selected class="hidden"></option>';
-    for (var i = 0; i < list.length; i++) {
-        var item = list[i];
-        // 格式：菜谱名 + 星级（星星图标） + 技法值
-        var displayContent = "<span class='name'>" + item.name + "</span>" +
-            "<span class='subtext'>" + item.rarityDisp + "</span>" +
-            "<span class='skilltext'>" + item.skillDisp + "</span>";
-        html += '<option value="' + item.recipeId + '" data-content="' + displayContent.replace(/"/g, '&quot;') + '">' + item.name + '</option>';
+    // 构建自定义下拉菜单HTML
+    var $container = $("#recipe-god-select-container");
+    var html = '';
+    
+    // 搜索框
+    html += '<div class="recipe-god-search-wrapper">';
+    html += '<input type="text" class="form-control recipe-god-search-input" placeholder="查找菜谱">';
+    html += '</div>';
+    
+    // 清空选择按钮
+    html += '<div class="recipe-god-filter-wrapper">';
+    html += '<button type="button" class="btn btn-default btn-sm btn-recipe-god-clear">清空已选</button>';
+    html += '</div>';
+    
+    // 菜谱列表
+    html += '<div class="recipe-god-recipe-list">';
+    for (var j = 0; j < list.length; j++) {
+        var item = list[j];
+        var selectedClass = String(item.recipeId) === String(selectedRecipeGodId) ? ' selected' : '';
+        
+        html += '<div class="recipe-god-recipe-item' + selectedClass + '" data-recipe-id="' + item.recipeId + '" data-name="' + item.name + '">';
+        html += '<div class="recipe-info">';
+        html += '<span class="recipe-name">' + item.name + '</span>';
+        html += '<span class="recipe-rarity">' + item.rarityDisp + '</span>';
+        if (item.skillDisp) {
+            html += '<span class="recipe-skill">' + item.skillDisp + '</span>';
+        }
+        html += '</div>';
+        html += '</div>';
     }
+    html += '</div>';
     
-    // 更新下拉框
-    $("#select-cal-recipe-god-query").html(html).selectpicker("refresh");
+    $container.html(html);
     
-    // 恢复选中状态
-    if (selectedId) {
-        $("#select-cal-recipe-god-query").selectpicker("val", selectedId);
+    // 绑定事件
+    bindRecipeGodDropdownEvents($container);
+    
+    // 更新按钮文字
+    updateRecipeGodDropdownText();
+}
+
+/**
+ * 绑定菜谱神级方案下拉菜单内部事件
+ */
+function bindRecipeGodDropdownEvents($container) {
+    // 搜索框输入事件
+    $container.find('.recipe-god-search-input').off('input').on('input', function() {
+        var keyword = $(this).val().toLowerCase();
+        $container.find('.recipe-god-recipe-item').each(function() {
+            var $item = $(this);
+            if (!keyword) {
+                $item.show();
+            } else {
+                var name = ($item.attr('data-name') || '').toLowerCase();
+                $item.toggle(name.indexOf(keyword) >= 0);
+            }
+        });
+    });
+    
+    // 菜谱项点击事件（单选）
+    $container.find('.recipe-god-recipe-item').off('click').on('click', function() {
+        var $item = $(this);
+        var recipeId = String($item.attr('data-recipe-id'));
+        
+        if ($item.hasClass('selected')) {
+            // 取消选中
+            $item.removeClass('selected');
+            selectedRecipeGodId = '';
+        } else {
+            // 取消其他选中（单选）
+            $container.find('.recipe-god-recipe-item').removeClass('selected');
+            // 选中当前
+            $item.addClass('selected');
+            selectedRecipeGodId = recipeId;
+        }
+        
+        updateRecipeGodDropdownText();
+        
+        // 单选完成后关闭下拉框
+        $("#recipe-god-dropdown-menu").hide();
+        $("#recipe-god-dropdown-wrapper").removeClass("open");
+    });
+    
+    // 清空选择按钮点击事件
+    $container.find('.btn-recipe-god-clear').off('click').on('click', function(e) {
+        e.stopPropagation();
+        selectedRecipeGodId = '';
+        $container.find('.recipe-god-recipe-item').removeClass('selected');
+        updateRecipeGodDropdownText();
+    });
+}
+
+/**
+ * 更新菜谱神级方案下拉框按钮文字
+ */
+function updateRecipeGodDropdownText() {
+    var $text = $('#recipe-god-dropdown-btn .pengci-dropdown-text');
+    if (!selectedRecipeGodId) {
+        $text.text('请选择菜谱').removeClass('has-selection');
+    } else {
+        var $item = $('#recipe-god-select-container .recipe-god-recipe-item[data-recipe-id="' + selectedRecipeGodId + '"]');
+        var name = $item.attr('data-name') || '已选菜谱';
+        $text.text(name).addClass('has-selection');
     }
 }
 
@@ -5148,7 +5574,7 @@ function queryRecipeGodPlan() {
     clearAllSelectedOnField(cultivationGameData);
     
     // 1. 获取选中的菜谱
-    var selectedRecipeId = $("#select-cal-recipe-god-query").val();
+    var selectedRecipeId = selectedRecipeGodId;
     if (!selectedRecipeId) {
         return;
     }

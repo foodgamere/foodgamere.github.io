@@ -1267,26 +1267,32 @@
                                             data-on="碰瓷查询" data-off="贵客查询" data-onstyle="primary" data-offstyle="primary" data-width="90px">
                                     </div>
 
-                                    <div id="unultimated-chef-wrapper" class="inline-wrapper select-wrapper hidden" data-toggle="tooltip" title="选择查询修炼厨师">
-                                        <select id="select-cal-unultimated-chef" class="selectpicker monitor-none" multiple
-                                            data-width="120px" data-dropdown-align-right='auto'
-                                            data-none-selected-text="未修炼厨师" data-live-search="true"
-                                            data-live-search-placeholder="查找" data-none-results-text="没有找到"
-                                            data-max-options="3" data-max-options-text="最多选择3个"
-                                            data-selected-text-format="count" data-count-selected-text="{0}个厨师">
-                                        </select>
+                                    <div id="unultimated-chef-wrapper" class="inline-wrapper hidden">
+                                        <div class="unultimated-dropdown-wrapper" id="unultimated-dropdown-wrapper">
+                                            <button type="button" class="btn btn-default pengci-dropdown-toggle" id="unultimated-dropdown-btn">
+                                                <span class="pengci-dropdown-text">修炼厨师</span>
+                                                <span class="caret"></span>
+                                            </button>
+                                            <div class="pengci-dropdown-menu" id="unultimated-dropdown-menu" style="display: none;">
+                                                <div id="unultimated-select-container"></div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div id="unultimated-chef-action-wrapper" class="btn-group hidden">
                                         <button id="btn-unultimated-query" class="btn btn-default" type="button" onmouseup="this.blur()">查询</button>
                                         <button id="btn-unultimated-config" class="btn btn-default" type="button" data-toggle="modal" data-target="#unultimated-config-modal">配置</button>
                                     </div>
 
-                                    <div id="recipe-god-query-wrapper" class="inline-wrapper select-wrapper hidden" data-toggle="tooltip" title="选择查询菜谱神级方案">
-                                        <select id="select-cal-recipe-god-query" class="selectpicker monitor-none"
-                                            data-width="fit" data-dropdown-align-right='auto'
-                                            data-none-selected-text="请选择菜谱" data-live-search="true"
-                                            data-live-search-placeholder="查找" data-none-results-text="没有找到">
-                                        </select>
+                                    <div id="recipe-god-query-wrapper" class="inline-wrapper hidden" data-toggle="tooltip" title="选择查询菜谱神级方案">
+                                        <div class="recipe-god-dropdown-wrapper" id="recipe-god-dropdown-wrapper">
+                                            <button type="button" class="btn btn-default pengci-dropdown-toggle" id="recipe-god-dropdown-btn">
+                                                <span class="pengci-dropdown-text">选择菜谱</span>
+                                                <span class="caret"></span>
+                                            </button>
+                                            <div class="pengci-dropdown-menu" id="recipe-god-dropdown-menu" style="display: none;">
+                                                <div id="recipe-god-select-container"></div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div id="recipe-god-query-action-wrapper" class="btn-group hidden">
                                         <button id="btn-recipe-god-query" class="btn btn-default" type="button" onmouseup="this.blur()">查询</button>
@@ -2851,7 +2857,7 @@
                         <input type="checkbox" id="chk-unultimated-use-strong-equip" data-toggle="toggle" 
                             data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="50px">
                         <span class="setting-tip">
-                            使用强力厨具（加成100以上厨具）
+                                 使用强力厨具（勾选已配厨具时会强行使用已配厨具）
                         </span>
                     </p>
                     <p>
@@ -2891,7 +2897,7 @@
                             <input type="checkbox" id="chk-recipe-god-use-strong-equip" data-toggle="toggle" 
                                 data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="50px">
                             <span class="setting-tip" style="margin-left: 5px;">
-                                使用强力厨具
+                                 使用强力厨具（勾选已配厨具时会强行使用已配厨具）
                             </span>
                         </span>
                     </p>
