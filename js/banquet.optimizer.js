@@ -3585,6 +3585,9 @@ var BanquetOptimizer = (function() {
         _chefMap = {};
         _recipeMap = {};
         _menusByRule = [];
+        _rules = [];
+        _gameData = null;
+        _cachedConfig = {};
         
         if (typeof onComplete === 'function') {
             if (wasCancelled) {
