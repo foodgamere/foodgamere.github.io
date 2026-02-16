@@ -85,7 +85,6 @@ var BanquetOptimizer = (function() {
     'use strict';
     
     var _isRunning = false;
-    var _cancelled = false;
     var _targetScore = null;
     var _bestResult = null;
     var _gameData = null;
@@ -445,7 +444,6 @@ var BanquetOptimizer = (function() {
     function init(gameData) {
         _bestResult = null;
         _isRunning = false;
-        _cancelled = false;
         _targetScore = null;
         _gameData = gameData || null;
         _rules = [];
@@ -901,7 +899,6 @@ var BanquetOptimizer = (function() {
             var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
             
             for (var i = 0; i < rule.chefs.length; i++) {
-                if (_cancelled) break;
                 var chef = rule.chefs[i];
                 if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
                 // 跳过已用厨师（快速排名时不需要评估已用的）
@@ -1003,7 +1000,6 @@ var BanquetOptimizer = (function() {
         var phase1 = [];
         
         for (var i = 0; i < menus.length; i++) {
-            if (_cancelled) break;
             var rd = menus[i];
             if (usedRecipeIds[rd.recipeId]) continue;
             
@@ -1072,7 +1068,6 @@ var BanquetOptimizer = (function() {
             // 有菜谱依赖意图：对top候选逐个重算
             var phase2Limit = Math.min(phase2Size, phase1.length);
             for (var i = 0; i < phase2Limit; i++) {
-                if (_cancelled) break;
                 var rd = phase1[i].rd;
                 var qty = phase1[i].qty;
                 
@@ -1141,7 +1136,6 @@ var BanquetOptimizer = (function() {
         var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
         
         for (var i = 0; i < phase2.length; i++) {
-            if (_cancelled) break;
             _simSetRecipe(ruleIndex, chefIndex, recipeIndex, phase2[i].rd.recipeId, preRemainMaterials);
             var score = calcFn();
             results.push({recipeId: phase2[i].rd.recipeId, score: score});
@@ -1724,7 +1718,6 @@ var BanquetOptimizer = (function() {
     // ==================== 菜谱优先初始化 ====================
 
     function _generateInitialSolutionAsync(onProgress, onDone) {
-        if (_cancelled) { if (typeof onDone === 'function') onDone(); return; }
         var activeRules = [];
         for (var ri = 0; ri < _rules.length; ri++) {
             if (_shouldProcessRule(ri)) activeRules.push(ri);
@@ -1763,7 +1756,7 @@ var BanquetOptimizer = (function() {
         }
         
         function _processNextRule() {
-            if (_cancelled || mainIdx >= activeRules.length) {
+            if (mainIdx >= activeRules.length) {
                 _finishInitialization(candidates, activeRules, onDone);
                 return;
             }
@@ -1789,7 +1782,7 @@ var BanquetOptimizer = (function() {
             var seedPos = 0;
             
             function _processNextPosition() {
-                if (_cancelled || seedPos >= numChefs) {
+                if (seedPos >= numChefs) {
                     _processSynergySeeds();
                     return;
                 }
@@ -1821,7 +1814,7 @@ var BanquetOptimizer = (function() {
                 // 种子菜谱循环改为异步，每个种子之间让出线程
                 var rsi = 0;
                 function _processNextSeedRecipe() {
-                    if (_cancelled || rsi >= topRecipes.length) {
+                    if (rsi >= topRecipes.length) {
                         seedPos++;
                         _updateInitProgress(_getBestCandidateScore());
                         setTimeout(_processNextPosition, 0);
@@ -1915,19 +1908,17 @@ var BanquetOptimizer = (function() {
             }
             
             function _processSynergySeeds() {
-                if (synergyPairs.length > 0 && !_cancelled) {
+                if (synergyPairs.length > 0) {
                     var synergyTried = {};
                     var maxSynergySeeds = Math.min(3, synergyPairs.length);
                     
                     for (var spi = 0; spi < maxSynergySeeds; spi++) {
-                        if (_cancelled) break;
                         var sp = synergyPairs[spi];
                         var spKey = sp.chefId + '_' + sp.recipeId;
                         if (synergyTried[spKey]) continue;
                         synergyTried[spKey] = true;
                         
                         for (var synSeedPos = 0; synSeedPos < numChefs; synSeedPos++) {
-                            if (_cancelled) break;
                             
                             _initSimState();
                             
@@ -2141,7 +2132,6 @@ var BanquetOptimizer = (function() {
      * 饱食度感知 — 最后一轮检查饱食度偏差，尝试微调
      */
     function _quickRefineFast(activeRules, lightMode) {
-        if (_cancelled) return;
         // lightMode可以是boolean或数字
         // true/1 = 1轮只调菜谱, false = CONFIG.refineIter轮, 数字N = N轮含厨师
         var maxIter, skipChef;
@@ -2156,10 +2146,8 @@ var BanquetOptimizer = (function() {
             skipChef = false;
         }
         for (var iter = 0; iter < maxIter; iter++) {
-            if (_cancelled) break;
             var changed = false;
             for (var ri = 0; ri < activeRules.length; ri++) {
-                if (_cancelled) break;
                 var ruleIndex = activeRules[ri];
                 var rule = _rules[ruleIndex];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
@@ -2498,7 +2486,6 @@ var BanquetOptimizer = (function() {
      * 厨师交换搜索：尝试交换两个位置的厨师
      */
     function _climbChefSwap() {
-        if (_cancelled) return false;
         var improved = false;
         var positions = []; // [{ri, ci}]
         
@@ -2516,7 +2503,6 @@ var BanquetOptimizer = (function() {
         
         for (var i = 0; i < positions.length - 1; i++) {
             for (var j = i + 1; j < positions.length; j++) {
-                if (_cancelled) return improved;
                 
                 var p1 = positions[i], p2 = positions[j];
                 var id1 = _simState[p1.ri][p1.ci].chefId;
@@ -2560,18 +2546,15 @@ var BanquetOptimizer = (function() {
     }
 
     function _climbChefs() {
-        if (_cancelled) return false;
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
             if (!_shouldProcessRule(ruleIndex)) continue;
-            if (_cancelled) break;
             
             var rule = _rules[ruleIndex];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
             for (var chefIndex = 0; chefIndex < numChefs; chefIndex++) {
-                if (_cancelled) break;
                 
                 var currentChefId = _simState[ruleIndex][chefIndex].chefId;
                 var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
@@ -2614,19 +2597,16 @@ var BanquetOptimizer = (function() {
     }
 
     function _climbRecipes() {
-        if (_cancelled) return false;
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
             if (!_shouldProcessRule(ruleIndex)) continue;
-            if (_cancelled) break;
             
             var rule = _rules[ruleIndex];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
             for (var chefIndex = 0; chefIndex < numChefs; chefIndex++) {
                 for (var recipeIndex = 0; recipeIndex < 3; recipeIndex++) {
-                    if (_cancelled) break;
                     
                     var currentRecipeId = _simState[ruleIndex][chefIndex].recipes[recipeIndex].data 
                         ? _simState[ruleIndex][chefIndex].recipes[recipeIndex].data.recipeId : null;
@@ -2678,7 +2658,6 @@ var BanquetOptimizer = (function() {
      * 核心新增：两个位置的某道菜互换，可能发现贪心找不到的组合
      */
     function _climbRecipeSwap() {
-        if (_cancelled) return false;
         var improved = false;
         var positions = []; // [{ri, ci, reci}] 所有有菜谱的位置
         
@@ -2696,7 +2675,6 @@ var BanquetOptimizer = (function() {
         
         for (var i = 0; i < positions.length - 1; i++) {
             for (var j = i + 1; j < positions.length; j++) {
-                if (_cancelled) return improved;
                 
                 var p1 = positions[i], p2 = positions[j];
                 var r1 = _simState[p1.ri][p1.ci].recipes[p1.reci];
@@ -2821,7 +2799,6 @@ var BanquetOptimizer = (function() {
         }
         
         _isRunning = true;
-        _cancelled = false;
         _bestSimState = null;
         _bestScore = 0;
         
@@ -2842,11 +2819,9 @@ var BanquetOptimizer = (function() {
         
         // 初始化改为异步，支持进度回调和目标分数提前终止
         setTimeout(function() {
-            if (_cancelled) { _finishOptimization(onComplete, true); return; }
             
             _generateInitialSolutionAsync(onProgress, function() {
                 // 初始化完成回调
-                if (_cancelled) { _finishOptimization(onComplete, true); return; }
                 
                 var initialScore = _fastCalcScore();
                 _bestScore = initialScore;
@@ -2910,8 +2885,8 @@ var BanquetOptimizer = (function() {
         var seenFinalScores = {};
         
         function _runSeedSearch() {
-            if (_cancelled || seedIdx >= totalSeeds) {
-                _finishOptimization(onComplete, _cancelled);
+            if (seedIdx >= totalSeeds) {
+                _finishOptimization(onComplete);
                 return;
             }
             
@@ -2976,19 +2951,17 @@ var BanquetOptimizer = (function() {
                 var maxCross = isLightSeed ? 1 : 2;
                 
                 function _seedCrossLoop() {
-                    if (_cancelled || crossRound >= maxCross) {
+                    if (crossRound >= maxCross) {
                         _seedAfterCross();
                         return;
                     }
                     crossRound++;
-                    // 拆分跨贵客循环，让浏览器有机会处理取消事件
+                    // 拆分跨贵客循环，避免阻塞浏览器
                     setTimeout(function() {
-                        if (_cancelled) { _seedAfterCross(); return; }
                         var scoreBefore = _bestScore;
                         var crossImproved = _crossGuestReassign(activeRules);
                         if (crossImproved) {
                             setTimeout(function() {
-                                if (_cancelled) { _seedAfterCross(); return; }
                                 _simState = _cloneSimState(_bestSimState);
                                 _climbRecipeSwap();
                                 var ss = _fastCalcScore();
@@ -3002,16 +2975,10 @@ var BanquetOptimizer = (function() {
                 }
                 
                 function _seedAfterCross() {
-                    // 取消时直接走finish流程
-                    if (_cancelled) {
-                        _finishSeed();
-                        return;
-                    }
                     // 边界种子跳过整贵客重建和最终爬山
                     if (isLightSeed) {
-                        // 拆分setTimeout让取消可响应
+                        // 拆分setTimeout避免阻塞浏览器
                         setTimeout(function() {
-                            if (_cancelled) { _finishSeed(); return; }
                             _simState = _cloneSimState(_bestSimState);
                             _climbRecipeSwap();
                             var ss = _fastCalcScore();
@@ -3026,7 +2993,6 @@ var BanquetOptimizer = (function() {
                     
                     // 整贵客重建放到setTimeout中
                     setTimeout(function() {
-                        if (_cancelled) { _finishSeed(); return; }
                         if (crossDidImprove) {
                             _fullGuestRebuild(activeRules);
                         } else {
@@ -3034,7 +3000,6 @@ var BanquetOptimizer = (function() {
                         
                         // 菜谱交换也放到独立setTimeout
                         setTimeout(function() {
-                            if (_cancelled) { _finishSeed(); return; }
                             var scoreBeforeFinish = _bestScore;
                             _simState = _cloneSimState(_bestSimState);
                             _climbRecipeSwap();
@@ -3054,17 +3019,6 @@ var BanquetOptimizer = (function() {
                 }
                 
                 function _finishSeed() {
-                    // 取消时直接跳到finish，不再处理种子逻辑
-                    if (_cancelled) {
-                        // 恢复全局最佳（可能当前种子搜索中途被取消）
-                        if (globalBestScore > _bestScore) {
-                            _bestScore = globalBestScore;
-                            _bestSimState = globalBestState;
-                        }
-                        _finishOptimization(onComplete, true);
-                        return;
-                    }
-                    
                     var seedFinalScore = _bestScore;
                     // 收敛到已知结果时跳过剩余种子（提前终止）
                     if (seenFinalScores[seedFinalScore]) {
@@ -3113,7 +3067,6 @@ var BanquetOptimizer = (function() {
 
     // 随机扰动保留为补充手段（主搜索改为系统性深度搜索）
     function _perturbAndRebuild() {
-        if (_cancelled) return _bestScore;
         var activeRules = [];
         for (var ri = 0; ri < _rules.length; ri++) {
             if (_shouldProcessRule(ri)) activeRules.push(ri);
@@ -3202,7 +3155,6 @@ var BanquetOptimizer = (function() {
      * 每次替换后做完整精调，看是否能突破局部最优
      */
     function _exhaustiveSlotSearch(activeRules) {
-        if (_cancelled) return false;
         var bestScore = _bestScore;
         var improved = false;
         
@@ -3212,7 +3164,6 @@ var BanquetOptimizer = (function() {
             
             for (var ci = 0; ci < numChefs; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
-                    if (_cancelled) return improved;
                     
                     var curRecId = _simState[ruleIndex][ci].recipes[reci].data 
                         ? _simState[ruleIndex][ci].recipes[reci].data.recipeId : null;
@@ -3248,7 +3199,6 @@ var BanquetOptimizer = (function() {
      * 核心思路：当前解可能把好厨师分配给了错误的贵客
      */
     function _crossGuestReassign(activeRules) {
-        if (_cancelled) return false;
         if (activeRules.length < 2) return false;
         
         // 自适应精调深度 — 菜谱少时精调更深，菜谱多时轻量+后补
@@ -3262,7 +3212,6 @@ var BanquetOptimizer = (function() {
         var improved = false;
         
         for (var targetIdx = 0; targetIdx < activeRules.length; targetIdx++) {
-            if (_cancelled) break;
             var targetRule = activeRules[targetIdx];
             var rule = _rules[targetRule];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
@@ -3283,7 +3232,6 @@ var BanquetOptimizer = (function() {
             
             // 方案B: 对目标贵客的每个位置，尝试不同种子菜谱
             for (var seedPos = 0; seedPos < numChefs; seedPos++) {
-                if (_cancelled) break;
                 var strategy = _analyzeIntents(targetRule, seedPos);
                 var seedRecipeIdx = strategy.seedRecipeIndex;
                 
@@ -3303,7 +3251,6 @@ var BanquetOptimizer = (function() {
                 var topRecipes = _fastGetRecipeRanking(targetRule, seedPos, seedRecipeIdx, 5, true);
                 
                 for (var rsi = 0; rsi < topRecipes.length; rsi++) {
-                    if (_cancelled) break;
                     
                     _simState = _cloneSimState(_bestSimState);
                     _simState[targetRule][seedPos] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
@@ -3357,11 +3304,9 @@ var BanquetOptimizer = (function() {
      * 整贵客重建：完全清空一个贵客，用不同的首厨师重建
      */
     function _fullGuestRebuild(activeRules) {
-        if (_cancelled) return false;
         var improved = false;
         
         for (var targetIdx = 0; targetIdx < activeRules.length; targetIdx++) {
-            if (_cancelled) break;
             var targetRule = activeRules[targetIdx];
             var rule = _rules[targetRule];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
@@ -3397,7 +3342,6 @@ var BanquetOptimizer = (function() {
             // 对每个位置，尝试不同的首厨师
             for (var startPos = 0; startPos < numChefs; startPos++) {
                 for (var firstChefIdx = 0; firstChefIdx < Math.min(5, availableChefs.length); firstChefIdx++) {
-                    if (_cancelled) break;
                     var firstChef = availableChefs[firstChefIdx];
                     if (currentChefSet[firstChef.chefId] && startPos === 0) continue;
                     
@@ -3455,8 +3399,8 @@ var BanquetOptimizer = (function() {
      * 保留的随机扰动（作为补充手段）
      */
     function _runRandomPerturbPhase(round, maxRounds, onProgress, onComplete) {
-        if (_cancelled || round >= maxRounds) {
-            _finishOptimization(onComplete, _cancelled);
+        if (round >= maxRounds) {
+            _finishOptimization(onComplete);
             return;
         }
         _simState = _cloneSimState(_bestSimState);
@@ -3478,7 +3422,7 @@ var BanquetOptimizer = (function() {
     }
 
     function _runClimbingPhase(round, onDone, onProgress) {
-        if (_cancelled || round >= CONFIG.maxRounds) {
+        if (round >= CONFIG.maxRounds) {
             if (typeof onDone === 'function') onDone();
             return;
         }
@@ -3487,27 +3431,23 @@ var BanquetOptimizer = (function() {
         var scoreBefore = _bestScore;
         var chefImproved = false, swapImproved = false, recipeImproved = false, recipeSwapImproved = false;
         
-        // 每个操作独立setTimeout，让浏览器有机会处理取消点击
+        // 每个操作独立setTimeout，避免阻塞浏览器
         // Step 1: 厨师爬山
         setTimeout(function() {
-            if (_cancelled) { if (typeof onDone === 'function') onDone(); return; }
             chefImproved = _climbChefs();
             
             // Step 2: 厨师交换
             setTimeout(function() {
-                if (_cancelled) { if (typeof onDone === 'function') onDone(); return; }
                 _simState = _cloneSimState(_bestSimState);
                 swapImproved = _climbChefSwap();
                 
                 // Step 3: 菜谱爬山
                 setTimeout(function() {
-                    if (_cancelled) { if (typeof onDone === 'function') onDone(); return; }
                     _simState = _cloneSimState(_bestSimState);
                     recipeImproved = _climbRecipes();
                     
                     // Step 4: 菜谱交换
                     setTimeout(function() {
-                        if (_cancelled) { if (typeof onDone === 'function') onDone(); return; }
                         _simState = _cloneSimState(_bestSimState);
                         recipeSwapImproved = _climbRecipeSwap();
                         
@@ -3534,14 +3474,13 @@ var BanquetOptimizer = (function() {
 
     // ==================== 完成：写回系统 ====================
 
-    function _finishOptimization(onComplete, wasCancelled) {
+    function _finishOptimization(onComplete) {
         // 防止重复调用
         if (!_isRunning) return;
         
         // 停止匀速进度定时器
         _stopProgressTimer();
         
-        var statusText = wasCancelled ? '已取消' : '完成';
         // 将最佳模拟状态写回系统（这里才触碰DOM）
         var memTotal = 0;
         if (_bestSimState) {
@@ -3575,6 +3514,11 @@ var BanquetOptimizer = (function() {
         _bestResult = { score: finalScore };
         _isRunning = false;
         
+        // 先调用完成回调（回调中的 applyResult 仍需要 _gameData 等数据）
+        if (typeof onComplete === 'function') {
+            onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
+        }
+        
         // 释放大对象，减少内存占用，避免影响后续操作（如导入数据）
         _simState = null;
         _bestSimState = null;
@@ -3588,14 +3532,6 @@ var BanquetOptimizer = (function() {
         _rules = [];
         _gameData = null;
         _cachedConfig = {};
-        
-        if (typeof onComplete === 'function') {
-            if (wasCancelled) {
-                onComplete({ success: false, cancelled: true, score: finalScore, timeMs: totalTime, message: '已取消' });
-            } else {
-                onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
-            }
-        }
     }
 
     /**
@@ -3649,11 +3585,6 @@ var BanquetOptimizer = (function() {
         return { actualScore: score };
     }
 
-    function cancel() {
-        if (!_isRunning || _cancelled) return;
-        _cancelled = true;
-        _stopProgressTimer(); // 取消时立即停止进度定时器
-    }
     function isRunning() { return _isRunning; }
     function getBestResult() { return _bestResult; }
     
@@ -3666,7 +3597,6 @@ var BanquetOptimizer = (function() {
     return {
         init: init,
         optimize: optimize,
-        cancel: cancel,
         isRunning: isRunning,
         getBestResult: getBestResult,
         applyResult: applyResult,
