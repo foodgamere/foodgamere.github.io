@@ -4428,3 +4428,12 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         margin: 5px;
     }
 }
+
+/* 排除食材下拉框隐藏分组间的分隔线和标题底部线 */
+#chk-cal-recipe-material-exclude ~ .dropdown-menu .divider,
+#chk-cal-recipe-material-exclude + .dropdown-menu .divider {
+    display: none !important;
+}
+#chk-cal-recipe-material-exclude ~ .dropdown-menu .dropdown-header.collapsible {
+    border-bottom: none;
+}
