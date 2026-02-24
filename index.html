@@ -12,9 +12,9 @@
     <link rel="stylesheet" type="text/css" href="css/food.min.css?v=77" />
     <script type="text/javascript" src="js/guest.calculator.js?v=3"></script>
     <script type="text/javascript" src="js/query.guest.js?v=2"></script>
-    <script type="text/javascript" src="js/food.min.js?v=266"></script>
+    <script type="text/javascript" src="js/food.min.js?v=267"></script>
     <script type="text/javascript" src="js/query.cultivate.js?v=4"></script>
-    <script type="text/javascript" src="js/banquet.optimizer.js?v=5"></script>
+    <script type="text/javascript" src="js/banquet.optimizer.js?v=1"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=173" />
     <script>
         $(function () {
@@ -2147,6 +2147,22 @@
                                 <div id="banquet-progress-bar" style="width: 0%; height: 100%; background: #4a90d9; border-radius: 4px; transition: width 0.3s;"></div>
                             </div>
                             <span id="banquet-progress-text" style="white-space: nowrap; font-size: 13px; color: #666;">0%</span>
+                        </div>
+                        <div class="competition-auto-calc hidden" id="competition-auto-calc" style="max-width: 1130px; margin: 0 auto 8px;">
+                            <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
+                                <select id="select-competition-tier" class="selectpicker" data-width="auto" data-style="btn-default">
+                                    <option value="-1">不限制分数</option>
+                                </select>
+                            </div>
+                            <button id="btn-competition-auto" class="btn btn-primary" type="button">
+                                自动计算
+                            </button>
+                        </div>
+                        <div id="competition-progress-wrapper" class="hidden" style="max-width: 1130px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px;">
+                            <div style="flex: 1; height: 8px; background: #e8e8e8; border-radius: 4px; overflow: hidden;">
+                                <div id="competition-progress-bar" style="width: 0%; height: 100%; background: #e67e22; border-radius: 4px; transition: width 0.3s;"></div>
+                            </div>
+                            <span id="competition-progress-text" style="white-space: nowrap; font-size: 13px; color: #666;">0%</span>
                         </div>
                         <div class="cal-custom-item">
                             <div id="mobile-cultivate-container" class="hidden" style="padding: 4px 8px;"></div>
