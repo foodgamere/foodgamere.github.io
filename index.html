@@ -3119,8 +3119,8 @@
                 '<div style="margin-bottom: 20px;">' +
                     '<div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">' +
                         '<div style="flex: 1;">' +
-                            '<label style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">选择文件：</label>' +
-                            '<input type="file" id="algorithm-file-input" accept=".js" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">' +
+                            '<label style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">选择文件（.js）：</label>' +
+                            '<input type="file" id="algorithm-file-input" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">' +
                         '</div>' +
                         '<button id="btn-import-algorithm" class="btn btn-primary" style="white-space: nowrap; height: 38px;"><span class="glyphicon glyphicon-upload"></span> 导入算法</button>' +
                     '</div>' +
@@ -3190,13 +3190,21 @@
                 showAlert('请先选择文件', '提示');
                 return;
             }
+            
+            // 检查文件扩展名（提示用户，但不强制）
+            var fileName = file.name.toLowerCase();
+            if (!fileName.endsWith('.js')) {
+                if (!confirm('选择的文件不是 .js 文件，是否继续导入？')) {
+                    return;
+                }
+            }
 
             var reader = new FileReader();
             reader.onload = function(e) {
                 var code = e.target.result;
                 
                 if (code.indexOf('CompetitionOptimizer') === -1) {
-                    showAlert('文件格式不正确，请确保是有效的算法文件', '错误');
+                    showAlert('文件格式不正确，请确保是有效的算法文件（需包含 CompetitionOptimizer）', '错误');
                     return;
                 }
 
@@ -3245,10 +3253,14 @@
             
             if (confirm('确定要删除算法 "' + activeAlgo.name + '" 吗？删除后将恢复使用默认算法。')) {
                 if (deleteAlgorithm(activeAlgorithmId)) {
-                    showAlert('算法已删除！页面将刷新以恢复默认算法。', '成功');
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1000);
+                    // 清除全局 CompetitionOptimizer 对象
+                    if (typeof window.CompetitionOptimizer !== 'undefined') {
+                        delete window.CompetitionOptimizer;
+                        console.log('[厨神大赛] 已清除 CompetitionOptimizer');
+                    }
+                    
+                    showAlert('算法已删除！已恢复使用默认算法。', '成功');
+                    updateAlgorithmList();
                 }
             }
         });
