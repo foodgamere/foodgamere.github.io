@@ -2149,13 +2149,34 @@
                             <span id="banquet-progress-text" style="white-space: nowrap; font-size: 13px; color: #666;">0%</span>
                         </div>
                         <div class="competition-auto-calc hidden" id="competition-auto-calc" style="max-width: 1130px; margin: 0 auto 8px;">
-                            <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
+                            <div class="select-wrapper chushen-only" style="display: inline-block; margin-right: 5px;">
+                                <select id="select-competition-chefs" class="selectpicker" multiple
+                                    data-width="auto" data-style="btn-default"
+                                    data-live-search="true" data-live-search-placeholder="查找厨师"
+                                    data-none-selected-text="全部厨师" data-selected-text-format="count"
+                                    data-count-selected-text="{0}个厨师" data-none-results-text="没有找到"
+                                    data-actions-box="true" data-deselect-all-text="清空"
+                                    data-select-all-text="全选">
+                                </select>
+                            </div>
+                            <button id="btn-save-chef-combo" class="btn btn-default btn-sm chushen-only" type="button" style="display: inline-block; margin-right: 3px; vertical-align: top; margin-top: 1px;" title="保存当前厨师组合">
+                                <span class="glyphicon glyphicon-floppy-disk"></span>
+                            </button>
+                            <div class="select-wrapper chushen-only" style="display: inline-block; margin-right: 5px;">
+                                <select id="select-chef-combo" class="selectpicker" data-width="auto" data-style="btn-default"
+                                    data-none-selected-text="厨师组合" data-none-results-text="无">
+                                </select>
+                            </div>
+                            <div class="select-wrapper chushen-only" style="display: inline-block; margin-right: 5px;">
                                 <select id="select-competition-tier" class="selectpicker" data-width="auto" data-style="btn-default">
                                     <option value="-1">不限制分数</option>
                                 </select>
                             </div>
-                            <button id="btn-competition-auto" class="btn btn-primary" type="button">
+                            <button id="btn-competition-auto" class="btn btn-primary chushen-only" type="button">
                                 自动计算
+                            </button>
+                            <button id="btn-competition-settings" class="btn btn-default btn-sm chushen-only" type="button" style="display: inline-block; margin-left: 3px; vertical-align: top; margin-top: 1px;" title="算法设置">
+                                <span class="glyphicon glyphicon-cog"></span>
                             </button>
                         </div>
                         <div id="competition-progress-wrapper" class="hidden" style="max-width: 1130px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px;">
@@ -2962,5 +2983,310 @@
         </div>
     </div>
 </body>
+
+<script>
+(function() {
+    'use strict';
+
+    var STORAGE_KEY_PREFIX = 'competition_algorithm_';
+    var STORAGE_LIST_KEY = 'competition_algorithm_list';
+    var STORAGE_ACTIVE_KEY = 'competition_algorithm_active';
+    var algorithmList = [];
+    var activeAlgorithmId = null;
+
+    function checkChushenParam() {
+        var urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get('chushen') === '123';
+    }
+
+    function initDisplayControl() {
+        var isChushenMode = checkChushenParam();
+        if (!isChushenMode) {
+            $('.chushen-only').hide();
+        } else {
+            $('.chushen-only').show();
+        }
+    }
+
+    function loadAlgorithmList() {
+        try {
+            var stored = localStorage.getItem(STORAGE_LIST_KEY);
+            if (stored) {
+                algorithmList = JSON.parse(stored);
+            }
+            var activeId = localStorage.getItem(STORAGE_ACTIVE_KEY);
+            if (activeId) {
+                activeAlgorithmId = activeId;
+            }
+        } catch (e) {
+            console.error('[厨神大赛] 加载算法列表失败:', e);
+        }
+    }
+
+    function saveAlgorithmList() {
+        try {
+            localStorage.setItem(STORAGE_LIST_KEY, JSON.stringify(algorithmList));
+            if (activeAlgorithmId) {
+                localStorage.setItem(STORAGE_ACTIVE_KEY, activeAlgorithmId);
+            }
+        } catch (e) {
+            console.error('[厨神大赛] 保存算法列表失败:', e);
+        }
+    }
+
+    function getAlgorithmCode(id) {
+        try {
+            return localStorage.getItem(STORAGE_KEY_PREFIX + id);
+        } catch (e) {
+            console.error('[厨神大赛] 读取算法失败:', e);
+            return null;
+        }
+    }
+
+    function saveAlgorithm(name, code) {
+        try {
+            var id = 'algo_' + Date.now();
+            var algorithm = {
+                id: id,
+                name: name,
+                size: code.length,
+                createTime: new Date().toLocaleString('zh-CN')
+            };
+            
+            localStorage.setItem(STORAGE_KEY_PREFIX + id, code);
+            algorithmList.push(algorithm);
+            saveAlgorithmList();
+            
+            return id;
+        } catch (e) {
+            console.error('[厨神大赛] 保存算法失败:', e);
+            return null;
+        }
+    }
+
+    function deleteAlgorithm(id) {
+        try {
+            localStorage.removeItem(STORAGE_KEY_PREFIX + id);
+            algorithmList = algorithmList.filter(function(a) { return a.id !== id; });
+            if (activeAlgorithmId === id) {
+                activeAlgorithmId = null;
+                localStorage.removeItem(STORAGE_ACTIVE_KEY);
+            }
+            saveAlgorithmList();
+            return true;
+        } catch (e) {
+            console.error('[厨神大赛] 删除算法失败:', e);
+            return false;
+        }
+    }
+
+    function setActiveAlgorithm(id) {
+        activeAlgorithmId = id;
+        localStorage.setItem(STORAGE_ACTIVE_KEY, id);
+        var code = getAlgorithmCode(id);
+        if (code) {
+            executeAlgorithm(code);
+        }
+    }
+
+    function executeAlgorithm(code) {
+        try {
+            // 使用间接eval调用，确保在全局作用域执行
+            (1, eval)(code);
+            
+            // 验证CompetitionOptimizer是否已定义
+            if (typeof window.CompetitionOptimizer === 'undefined') {
+                console.error('[厨神大赛] CompetitionOptimizer未定义');
+                showAlert('算法执行失败：CompetitionOptimizer未定义', '错误');
+                return false;
+            }
+            
+            return true;
+        } catch (e) {
+            console.error('[厨神大赛] 执行算法失败:', e);
+            showAlert('算法执行失败：' + e.message, '错误');
+            return false;
+        }
+    }
+
+    function createSettingsModal() {
+        var modalHtml = '<div id="competition-settings-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">' +
+            '<div style="background: white; border-radius: 8px; padding: 20px; max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">' +
+                '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">' +
+                    '<h4 style="margin: 0; font-size: 18px; font-weight: bold;">算法设置</h4>' +
+                    '<button id="close-settings-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #999; line-height: 1;">&times;</button>' +
+                '</div>' +
+                '<div style="margin-bottom: 20px;">' +
+                    '<div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">' +
+                        '<div style="flex: 1;">' +
+                            '<label style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">选择文件：</label>' +
+                            '<input type="file" id="algorithm-file-input" accept=".js" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">' +
+                        '</div>' +
+                        '<button id="btn-import-algorithm" class="btn btn-primary" style="white-space: nowrap; height: 38px;"><span class="glyphicon glyphicon-upload"></span> 导入算法</button>' +
+                    '</div>' +
+                    '<div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">' +
+                        '<div style="flex: 1;">' +
+                            '<label style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">选择算法：</label>' +
+                            '<select id="algorithm-select" class="form-control" style="font-size: 14px; height: 38px;">' +
+                                '<option value="">暂无算法</option>' +
+                            '</select>' +
+                        '</div>' +
+                        '<button id="btn-delete-current-algorithm" class="btn btn-danger" style="white-space: nowrap; height: 38px;" disabled><span class="glyphicon glyphicon-trash"></span> 删除算法</button>' +
+                    '</div>' +
+                '</div>' +
+                '<div style="padding: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; font-size: 13px; color: #856404;">' +
+                    '<strong>注意：</strong>导入的算法文件会保存在浏览器本地存储中，刷新页面后仍然有效。删除算法后需要刷新页面恢复默认算法。' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        $('body').append(modalHtml);
+    }
+
+    function updateAlgorithmList() {
+        var $select = $('#algorithm-select');
+        $select.empty();
+        
+        if (algorithmList.length === 0) {
+            $select.append('<option value="">暂无算法</option>');
+        } else {
+            algorithmList.forEach(function(algo) {
+                var isActive = algo.id === activeAlgorithmId;
+                var optionText = algo.name + ' (' + (algo.size / 1024).toFixed(2) + ' KB)' + (isActive ? ' [当前]' : '');
+                var option = $('<option></option>')
+                    .val(algo.id)
+                    .text(optionText)
+                    .prop('selected', isActive);
+                $select.append(option);
+            });
+        }
+        
+        // 更新删除按钮状态
+        $('#btn-delete-current-algorithm').prop('disabled', !activeAlgorithmId);
+    }
+
+
+
+    function initEventListeners() {
+        $(document).on('click', '#btn-competition-settings', function() {
+            $('#competition-settings-modal').css('display', 'flex');
+            updateAlgorithmList();
+        });
+
+        $(document).on('click', '#close-settings-modal', function() {
+            $('#competition-settings-modal').hide();
+        });
+
+        $(document).on('click', '#competition-settings-modal', function(e) {
+            if (e.target.id === 'competition-settings-modal') {
+                $(this).hide();
+            }
+        });
+
+        $(document).on('click', '#btn-import-algorithm', function() {
+            var fileInput = document.getElementById('algorithm-file-input');
+            var file = fileInput.files[0];
+            
+            if (!file) {
+                showAlert('请先选择文件', '提示');
+                return;
+            }
+
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var code = e.target.result;
+                
+                if (code.indexOf('CompetitionOptimizer') === -1) {
+                    showAlert('文件格式不正确，请确保是有效的算法文件', '错误');
+                    return;
+                }
+
+                var id = saveAlgorithm(file.name, code);
+                if (id) {
+                    setActiveAlgorithm(id);
+                    showAlert('算法导入成功！新算法已生效。', '成功');
+                    updateAlgorithmList();
+                    fileInput.value = '';
+                }
+            };
+            
+            reader.onerror = function() {
+                showAlert('文件读取失败', '错误');
+            };
+            
+            reader.readAsText(file);
+        });
+
+        // 下拉框选择变化时自动加载算法
+        $(document).on('change', '#algorithm-select', function() {
+            var selectedId = $(this).val();
+            
+            if (!selectedId) {
+                return;
+            }
+            
+            if (selectedId === activeAlgorithmId) {
+                showAlert('该算法已经是当前使用的算法', '提示');
+                return;
+            }
+            
+            setActiveAlgorithm(selectedId);
+            showAlert('算法已切换！新算法已生效。', '成功');
+            updateAlgorithmList();
+        });
+
+        $(document).on('click', '#btn-delete-current-algorithm', function() {
+            if (!activeAlgorithmId) {
+                showAlert('当前没有使用自定义算法', '提示');
+                return;
+            }
+            
+            var activeAlgo = algorithmList.find(function(a) { return a.id === activeAlgorithmId; });
+            if (!activeAlgo) return;
+            
+            if (confirm('确定要删除算法 "' + activeAlgo.name + '" 吗？删除后将恢复使用默认算法。')) {
+                if (deleteAlgorithm(activeAlgorithmId)) {
+                    showAlert('算法已删除！页面将刷新以恢复默认算法。', '成功');
+                    setTimeout(function() {
+                        window.location.reload();
+                    }, 1000);
+                }
+            }
+        });
+    }
+
+    function init() {
+        loadAlgorithmList();
+        
+        if (activeAlgorithmId) {
+            var code = getAlgorithmCode(activeAlgorithmId);
+            if (code) {
+                executeAlgorithm(code);
+                var activeAlgo = algorithmList.find(function(a) { return a.id === activeAlgorithmId; });
+            }
+        }
+        
+        initDisplayControl();
+        createSettingsModal();
+        initEventListeners();
+        
+    }
+
+    $(document).ready(function() {
+        init();
+    });
+
+    window.CompetitionSettings = {
+        hasCustomAlgorithm: function() {
+            return activeAlgorithmId !== null;
+        },
+        getActiveAlgorithm: function() {
+            return activeAlgorithmId ? getAlgorithmCode(activeAlgorithmId) : null;
+        },
+        getAlgorithmList: function() {
+            return algorithmList;
+        }
+    };
+})();
+</script>
 
 </html>
