@@ -386,9 +386,13 @@ var GuestRateCalculator = (function($) {
                     else if (displayRank === '传') currentRank = 5;
                     
                     // 显示当前品级对应的贵客
-                    // 优级(2)对应guests[0], 特级(3)对应guests[1], 神级(4)对应guests[2]
-                    // 可级(1)没有对应的贵客，传级(5)也没有对应的贵客
-                    var currentGuestIndex = currentRank - 2; // 优级(2)对应索引0, 特级(3)对应索引1, 神级(4)对应索引2
+                    // 优级(2)对应guests[0], 特级(3)对应guests[1], 神级(4)和传级(5)都对应guests[2]
+                    var currentGuestIndex = -1;
+                    if (currentRank >= 2 && currentRank <= 4) {
+                        currentGuestIndex = currentRank - 2;
+                    } else if (currentRank === 5) {
+                        currentGuestIndex = 2;
+                    }
                     if (currentGuestIndex >= 0 && currentGuestIndex < Math.min(a.guests.length, 3)) {
                         var currentGuest = a.guests[currentGuestIndex];
                         if (currentGuest && currentGuest.guest) {
@@ -3106,9 +3110,10 @@ var GuestRateCalculator = (function($) {
     
     /**
      * 自动查询场上厨师的碰瓷菜谱
+     * @param {boolean} overwriteExisting - 是否忽略场上已有菜谱并全量重查
      * @returns {Object} 查询结果
      */
-    function autoQueryPengciRecipesForCurrentChefs() {
+    function autoQueryPengciRecipesForCurrentChefs(overwriteExisting) {
         // 获取场上的厨师
         var currentChefs = getCurrentChefs();
         
@@ -3138,8 +3143,8 @@ var GuestRateCalculator = (function($) {
         // 获取所有普通碰瓷菜谱（排除主线碰瓷）
         var normalPengciRecipes = getNormalPengciRecipes(gameData);
 
-        // 跳过场上当前已分配的菜谱，只补缺口
-        var assignedRecipeNames = getCurrentAssignedRecipeNames();
+        // 是否保留场上已有菜谱：默认补缺；按钮主动查询时全量重查
+        var assignedRecipeNames = overwriteExisting ? new Set() : getCurrentAssignedRecipeNames();
         if (assignedRecipeNames.size > 0) {
             normalPengciRecipes = normalPengciRecipes.filter(function(item) {
                 return !assignedRecipeNames.has(item.recipeName);
@@ -3149,11 +3154,11 @@ var GuestRateCalculator = (function($) {
         // 为每个厨师查找可碰瓷的菜谱（优先最低品级）
         var assignment = [];
         var totalExpectedRecipes = currentChefs.length * 3;
-        var existingRecipeCount = assignedRecipeNames.size;
+        var existingRecipeCount = overwriteExisting ? 0 : assignedRecipeNames.size;
 
         for (var i = 0; i < currentChefs.length; i++) {
             var chefInfo = currentChefs[i];
-            var chefRecipes = findPengciRecipesForChef(chefInfo.chef, normalPengciRecipes, rule, 3);
+            var chefRecipes = findPengciRecipesForChef(chefInfo.chef, normalPengciRecipes, rule, 3, chefInfo.slotIndex);
 
             if (chefRecipes.length > 0) {
                 assignment.push({
@@ -3180,7 +3185,8 @@ var GuestRateCalculator = (function($) {
                 assignment: assignment,
                 unassignedRecipes: [],
                 isPartial: false,
-                isAutoQuery: true
+                isAutoQuery: true,
+                isOverwriteExisting: !!overwriteExisting
             });
             
             // 然后显示补全选项
@@ -3196,7 +3202,8 @@ var GuestRateCalculator = (function($) {
             assignment: assignment,
             unassignedRecipes: [],
             isPartial: false,
-            isAutoQuery: true
+            isAutoQuery: true,
+            isOverwriteExisting: !!overwriteExisting
         };
     }
     
@@ -3351,6 +3358,34 @@ var GuestRateCalculator = (function($) {
     }
 
     /**
+     * 获取菜谱当前最低未完成的碰瓷目标
+     * @param {Object} recipe - 菜谱对象
+     * @returns {Object|null} {guest, targetRank, currentRank, recipeName} 或 null
+     */
+    function getLowestPendingPengciTarget(recipe) {
+        if (!recipe || !recipe.guests || recipe.guests.length === 0) {
+            return null;
+        }
+
+        var currentRank = getPengciRankValue(recipe.rank);
+
+        for (var j = 0; j < Math.min(recipe.guests.length, 3); j++) {
+            var targetRank = j + 2;
+            if (currentRank < targetRank) {
+                return {
+                    recipe: recipe,
+                    guest: recipe.guests[j].guest,
+                    targetRank: targetRank,
+                    currentRank: currentRank,
+                    recipeName: recipe.name
+                };
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 获取所有普通碰瓷菜谱（排除主线碰瓷）
      * @param {Object} gameData - 游戏数据
      * @returns {Array} 普通碰瓷菜谱数组
@@ -3374,31 +3409,13 @@ var GuestRateCalculator = (function($) {
             // 只考虑已拥有的菜谱
             if (recipe.got !== "是") continue;
 
-            var currentRank = getPengciRankValue(recipe.rank);
+            // 只取最低未完成的碰瓷目标，避免跳过更低品级造成浪费
+            var lowestTarget = getLowestPendingPengciTarget(recipe);
+            if (!lowestTarget) continue;
 
-            // 检查菜谱的升阶贵客
-            if (recipe.guests && recipe.guests.length > 0) {
-                // 对于每道菜谱，只选择最低品级的可碰瓷目标
-                for (var j = 0; j < Math.min(recipe.guests.length, 3); j++) {
-                    var guestName = recipe.guests[j].guest;
-                    var targetRank = j + 2; // j=0对应优级(2), j=1对应特级(3), j=2对应神级(4)
-
-                    // 如果当前等级小于目标等级，说明还可以碰瓷
-                    if (currentRank < targetRank) {
-                        // 检查是否为普通碰瓷（不在未完成主线任务中）
-                        if (!uncompletedMainlineGuests.has(guestName)) {
-                            normalRecipes.push({
-                                recipe: recipe,
-                                guest: guestName,
-                                targetRank: targetRank,
-                                currentRank: currentRank,
-                                recipeName: recipe.name
-                            });
-                            // 找到第一个可碰瓷的目标后就停止（最低品级优先）
-                            break;
-                        }
-                    }
-                }
+            // 最低目标如果属于未完成主线，则整道菜不进入普通碰瓷
+            if (!uncompletedMainlineGuests.has(lowestTarget.guest)) {
+                normalRecipes.push(lowestTarget);
             }
         }
 
@@ -3420,25 +3437,10 @@ var GuestRateCalculator = (function($) {
             // 只考虑已拥有的菜谱
             if (recipe.got !== "是") continue;
 
-            var currentRank = getPengciRankValue(recipe.rank);
-
-            // 对每道菜谱，只选择最低品级的可碰瓷目标
-            if (recipe.guests && recipe.guests.length > 0) {
-                for (var j = 0; j < Math.min(recipe.guests.length, 3); j++) {
-                    var guestName = recipe.guests[j].guest;
-                    var targetRank = j + 2;
-
-                    if (currentRank < targetRank) {
-                        allRecipes.push({
-                            recipe: recipe,
-                            guest: guestName,
-                            targetRank: targetRank,
-                            currentRank: currentRank,
-                            recipeName: recipe.name
-                        });
-                        break;
-                    }
-                }
+            // 只取当前最低未完成的碰瓷目标，避免跳级浪费次数
+            var lowestTarget = getLowestPendingPengciTarget(recipe);
+            if (lowestTarget) {
+                allRecipes.push(lowestTarget);
             }
         }
 
@@ -3451,13 +3453,14 @@ var GuestRateCalculator = (function($) {
      * @param {Array} pengciRecipes - 可碰瓷菜谱数组
      * @param {Object} rule - 规则对象
      * @param {number} maxCount - 最多返回的菜谱数量
+     * @param {number} chefIndex - 厨师位置索引（0-2），用于计算光环加成
      * @returns {Array} 菜谱详情数组
      */
-    function findPengciRecipesForChef(chef, pengciRecipes, rule, maxCount) {
+    function findPengciRecipesForChef(chef, pengciRecipes, rule, maxCount, chefIndex) {
         var matchedRecipes = [];
-        
-        // 计算厨师技法值
-        var chefWithSkills = calculateChefSkillValues(chef, rule, null);
+
+        // 计算厨师技法值（包含对应站位的光环加成）
+        var chefWithSkills = calculateChefSkillValues(chef, rule, chefIndex);
         
         // 遍历所有可碰瓷菜谱，找出厨师能精确做到目标品级的菜谱
         for (var i = 0; i < pengciRecipes.length; i++) {
@@ -3618,7 +3621,7 @@ var GuestRateCalculator = (function($) {
             if (currentCount >= 3) continue;
 
             // 查找该厨师能做的其他菜谱（不要求精确匹配品级）
-            var chefWithSkills = calculateChefSkillValues(item.chef, rule, null);
+            var chefWithSkills = calculateChefSkillValues(item.chef, rule, item.slotIndex);
             var additionalRecipes = [];
 
             for (var j = 0; j < normalPengciRecipes.length; j++) {
@@ -3717,7 +3720,7 @@ var GuestRateCalculator = (function($) {
             var currentCount = item.recipes.length;
             if (currentCount >= 3) continue;
 
-            var preciseRecipes = findPengciRecipesForChef(item.chef, allPengciRecipes, rule, 3 - currentCount);
+            var preciseRecipes = findPengciRecipesForChef(item.chef, allPengciRecipes, rule, 3 - currentCount, item.slotIndex);
             for (var j = 0; j < preciseRecipes.length; j++) {
                 item.recipes.push(preciseRecipes[j]);
                 globalAssignedRecipeNames.add(preciseRecipes[j].recipeName);
@@ -3788,33 +3791,7 @@ var GuestRateCalculator = (function($) {
             };
         }
         
-        // 查找能做剩余菜谱的其他厨师
-        var otherChefs = [];
-        for (var i = 0; i < gameData.chefs.length; i++) {
-            var chef = gameData.chefs[i];
-            
-            // 跳过未拥有的厨师和已使用的厨师
-            if (chef.got !== "是" || usedChefIds.has(chef.chefId)) continue;
-            
-            // 查找该厨师能做的剩余菜谱
-            var chefRecipes = findPengciRecipesForChef(chef, remainingRecipes, rule, needCount);
-            
-            if (chefRecipes.length > 0) {
-                otherChefs.push({
-                    chef: chef,
-                    chefId: chef.chefId,
-                    recipes: chefRecipes,
-                    recipeCount: chefRecipes.length
-                });
-            }
-        }
-        
-        // 按能做的菜谱数量降序排序
-        otherChefs.sort(function(a, b) {
-            return b.recipeCount - a.recipeCount;
-        });
-        
-        // 添加新厨师到空位
+        // 先找出空位，新增厨师的光环按准备放入的空位计算
         var emptySlots = [];
         for (var i = 0; i < 3; i++) {
             var isUsed = false;
@@ -3828,11 +3805,53 @@ var GuestRateCalculator = (function($) {
                 emptySlots.push(i);
             }
         }
+
+        // 查找能做剩余菜谱的其他厨师
+        var otherChefs = [];
+        for (var i = 0; i < gameData.chefs.length; i++) {
+            var chef = gameData.chefs[i];
+
+            // 跳过未拥有的厨师和已使用的厨师
+            if (chef.got !== "是" || usedChefIds.has(chef.chefId)) continue;
+
+            // 在所有空位中选择该厨师收益最高的位置
+            var bestChefRecipes = [];
+            var bestSlotIndex = null;
+            for (var s = 0; s < emptySlots.length; s++) {
+                var slotIndex = emptySlots[s];
+                var chefRecipes = findPengciRecipesForChef(chef, remainingRecipes, rule, needCount, slotIndex);
+                if (chefRecipes.length > bestChefRecipes.length) {
+                    bestChefRecipes = chefRecipes;
+                    bestSlotIndex = slotIndex;
+                }
+            }
+
+            if (bestChefRecipes.length > 0) {
+                otherChefs.push({
+                    chef: chef,
+                    chefId: chef.chefId,
+                    recipes: bestChefRecipes,
+                    recipeCount: bestChefRecipes.length,
+                    preferredSlotIndex: bestSlotIndex
+                });
+            }
+        }
+
+        // 按能做的菜谱数量降序排序
+        otherChefs.sort(function(a, b) {
+            return b.recipeCount - a.recipeCount;
+        });
         
         var addedCount = 0;
         for (var i = 0; i < otherChefs.length && emptySlots.length > 0 && addedCount < needCount; i++) {
             var otherChef = otherChefs[i];
-            var slotIndex = emptySlots.shift();
+            var slotIndex = otherChef.preferredSlotIndex;
+            var preferredIndex = emptySlots.indexOf(slotIndex);
+            if (preferredIndex >= 0) {
+                emptySlots.splice(preferredIndex, 1);
+            } else {
+                slotIndex = emptySlots.shift();
+            }
             
             // 最多取3道菜
             var recipesToAdd = otherChef.recipes.slice(0, Math.min(3, needCount - addedCount));
@@ -4249,7 +4268,8 @@ var GuestRateCalculator = (function($) {
         var unassignedRecipes = result.unassignedRecipes || [];
         var isPartial = result.isPartial || false;
         var isAutoQuery = result.isAutoQuery || false;
-        
+        var isOverwriteExisting = result.isOverwriteExisting || false;
+
         // 如果 assignment 为空，直接返回（不显示提示）
         if (!assignment || assignment.length === 0) {
             return;
@@ -4278,45 +4298,68 @@ var GuestRateCalculator = (function($) {
         
         // 如果是自动查询，使用 slotIndex；否则清空所有位置后按顺序设置
         if (isAutoQuery) {
-            // 自动查询模式：保留已有菜谱，只补充空位
-            for (var i = 0; i < assignment.length; i++) {
-                var item = assignment[i];
-                var slotIndex = item.slotIndex !== undefined ? item.slotIndex : i;
-
-                // 设置厨师
-                setCustomChef(0, slotIndex, item.chefId);
-
-                // 收集该位置已有菜谱及空位
-                var existingRecipeIds = new Set();
-                var emptyRecipeSlots = [];
-                if (typeof calCustomRule !== 'undefined' && calCustomRule.rules && calCustomRule.rules[0] && calCustomRule.rules[0].custom && calCustomRule.rules[0].custom[slotIndex] && calCustomRule.rules[0].custom[slotIndex].recipes) {
-                    var existingRecipes = calCustomRule.rules[0].custom[slotIndex].recipes;
-                    for (var j = 0; j < 3; j++) {
-                        if (existingRecipes[j] && existingRecipes[j].data && existingRecipes[j].data.recipeId) {
-                            existingRecipeIds.add(existingRecipes[j].data.recipeId);
-                        } else {
-                            emptyRecipeSlots.push(j);
-                        }
+            if (isOverwriteExisting) {
+                // 全量重查模式：按当前光环和场上配置重新覆盖结果
+                for (var i = 0; i < 3; i++) {
+                    if (typeof setCustomEquip === 'function') {
+                        setCustomEquip(0, i, null);
                     }
-                } else {
                     for (var j = 0; j < 3; j++) {
-                        emptyRecipeSlots.push(j);
+                        setCustomRecipe(0, i, j, null);
                     }
                 }
 
-                // 只往空位补充未存在的菜谱
-                for (var j = 0; j < item.recipes.length; j++) {
-                    var recipeDetail = item.recipes[j];
-                    var recipeId = recipeDetail.recipe.recipeId;
-                    if (existingRecipeIds.has(recipeId)) {
-                        continue;
+                for (var i = 0; i < assignment.length; i++) {
+                    var item = assignment[i];
+                    var slotIndex = item.slotIndex !== undefined ? item.slotIndex : i;
+
+                    setCustomChef(0, slotIndex, item.chefId);
+                    for (var j = 0; j < item.recipes.length && j < 3; j++) {
+                        var recipeDetail = item.recipes[j];
+                        setCustomRecipe(0, slotIndex, j, recipeDetail.recipe.recipeId);
                     }
-                    if (emptyRecipeSlots.length === 0) {
-                        break;
+                }
+            } else {
+                // 自动补全模式：保留已有菜谱，只补充空位
+                for (var i = 0; i < assignment.length; i++) {
+                    var item = assignment[i];
+                    var slotIndex = item.slotIndex !== undefined ? item.slotIndex : i;
+
+                    // 设置厨师
+                    setCustomChef(0, slotIndex, item.chefId);
+
+                    // 收集该位置已有菜谱及空位
+                    var existingRecipeIds = new Set();
+                    var emptyRecipeSlots = [];
+                    if (typeof calCustomRule !== 'undefined' && calCustomRule.rules && calCustomRule.rules[0] && calCustomRule.rules[0].custom && calCustomRule.rules[0].custom[slotIndex] && calCustomRule.rules[0].custom[slotIndex].recipes) {
+                        var existingRecipes = calCustomRule.rules[0].custom[slotIndex].recipes;
+                        for (var j = 0; j < 3; j++) {
+                            if (existingRecipes[j] && existingRecipes[j].data && existingRecipes[j].data.recipeId) {
+                                existingRecipeIds.add(existingRecipes[j].data.recipeId);
+                            } else {
+                                emptyRecipeSlots.push(j);
+                            }
+                        }
+                    } else {
+                        for (var j = 0; j < 3; j++) {
+                            emptyRecipeSlots.push(j);
+                        }
                     }
-                    var recipeSlotIndex = emptyRecipeSlots.shift();
-                    setCustomRecipe(0, slotIndex, recipeSlotIndex, recipeId);
-                    existingRecipeIds.add(recipeId);
+
+                    // 只往空位补充未存在的菜谱
+                    for (var j = 0; j < item.recipes.length; j++) {
+                        var recipeDetail = item.recipes[j];
+                        var recipeId = recipeDetail.recipe.recipeId;
+                        if (existingRecipeIds.has(recipeId)) {
+                            continue;
+                        }
+                        if (emptyRecipeSlots.length === 0) {
+                            break;
+                        }
+                        var recipeSlotIndex = emptyRecipeSlots.shift();
+                        setCustomRecipe(0, slotIndex, recipeSlotIndex, recipeId);
+                        existingRecipeIds.add(recipeId);
+                    }
                 }
             }
         } else {
@@ -4564,7 +4607,13 @@ var GuestRateCalculator = (function($) {
             return;
         }
         
-        // 构建下拉菜单内容
+        // 从本地存储恢复主线任务进度
+        var savedMainlineProgress = localStorage.getItem('pengci_mainline_progress');
+        if (savedMainlineProgress) {
+            $("#input-pengci-mainline").val(savedMainlineProgress);
+        }
+
+        // 构建下拉菜单内容（在恢复主线任务进度之后）
         buildPengciGuestDropdown($container);
         
         // 计算下拉菜单最大高度的函数（参考 Bootstrap-select 的 setMenuSize 逻辑）
@@ -4683,12 +4732,6 @@ var GuestRateCalculator = (function($) {
             }
         });
         
-        // 从本地存储恢复主线任务进度
-        var savedMainlineProgress = localStorage.getItem('pengci_mainline_progress');
-        if (savedMainlineProgress) {
-            $("#input-pengci-mainline").val(savedMainlineProgress);
-        }
-        
         // 监听主线任务输入框变化，保存到本地存储并重新构建下拉菜单
         $("#input-pengci-mainline").off("input.pengciDropdown").on("input.pengciDropdown", function() {
             var value = $(this).val();
@@ -4704,13 +4747,8 @@ var GuestRateCalculator = (function($) {
         $("#btn-pengci-guest-query").off("click").on("click", function() {
             // 检查是否未选择任何菜谱
             if (selectedPengciRecipes.length === 0) {
-                // 如果场上厨师和菜谱数量已足够，则不再重新搜索，避免覆盖补全结果
-                if (hasEnoughCurrentPengciConfig()) {
-                    return;
-                }
-
-                // 尝试自动查询场上厨师的碰瓷菜谱
-                var autoQueryResult = autoQueryPengciRecipesForCurrentChefs();
+                // 每次点击都基于当前场上厨师和光环全量重查，避免光环变化导致结果失准
+                var autoQueryResult = autoQueryPengciRecipesForCurrentChefs(true);
 
                 if (autoQueryResult.success) {
                     // 自动查询成功，显示结果
@@ -4785,9 +4823,9 @@ var GuestRateCalculator = (function($) {
             
             // 判断是否为主线贵客（未完成的主线任务贵客）
             var isMainline = uncompletedMainlineGuests.has(guest.name);
-            
-            // 判断是否为普通贵客（不在未完成主线任务中 或 已完成的主线任务贵客）
-            var isNormal = !uncompletedMainlineGuests.has(guest.name) || completedMainlineGuests.has(guest.name);
+
+            // 判断是否为普通贵客：不在当前未完成主线中的贵客都归到普通分类
+            var isNormal = !isMainline;
             
             // 添加所有贵客（包括无法碰瓷的）
             guestList.push({
