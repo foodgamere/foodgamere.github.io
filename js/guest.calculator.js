@@ -4295,6 +4295,13 @@ var GuestRateCalculator = (function($) {
             }
             return;
         }
+
+        function applyPengciRecipe(ruleIndex, chefIndex, recipeIndex, recipeId) {
+            setCustomRecipe(ruleIndex, chefIndex, recipeIndex, recipeId);
+            if (recipeId && typeof setCustomRecipeQuantity === 'function') {
+                setCustomRecipeQuantity(ruleIndex, chefIndex, recipeIndex, 1);
+            }
+        }
         
         // 如果是自动查询，使用 slotIndex；否则清空所有位置后按顺序设置
         if (isAutoQuery) {
@@ -4316,7 +4323,7 @@ var GuestRateCalculator = (function($) {
                     setCustomChef(0, slotIndex, item.chefId);
                     for (var j = 0; j < item.recipes.length && j < 3; j++) {
                         var recipeDetail = item.recipes[j];
-                        setCustomRecipe(0, slotIndex, j, recipeDetail.recipe.recipeId);
+                        applyPengciRecipe(0, slotIndex, j, recipeDetail.recipe.recipeId);
                     }
                 }
             } else {
@@ -4357,7 +4364,7 @@ var GuestRateCalculator = (function($) {
                             break;
                         }
                         var recipeSlotIndex = emptyRecipeSlots.shift();
-                        setCustomRecipe(0, slotIndex, recipeSlotIndex, recipeId);
+                        applyPengciRecipe(0, slotIndex, recipeSlotIndex, recipeId);
                         existingRecipeIds.add(recipeId);
                     }
                 }
@@ -4384,7 +4391,7 @@ var GuestRateCalculator = (function($) {
                 // 设置菜谱
                 for (var j = 0; j < item.recipes.length && j < 3; j++) {
                     var recipeDetail = item.recipes[j];
-                    setCustomRecipe(0, i, j, recipeDetail.recipe.recipeId);
+                    applyPengciRecipe(0, i, j, recipeDetail.recipe.recipeId);
                 }
             }
         }
