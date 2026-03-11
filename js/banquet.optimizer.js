@@ -4900,6 +4900,41 @@ var BanquetOptimizer = (function() {
         if (_bestSimState) {
             // 先恢复到最佳状态
             _simState = _bestSimState;
+
+            function _isRecipeSkillQualified(chefObj, recipeData) {
+                if (!recipeData) return false;
+                if (!chefObj) return false;
+                if (recipeData.stirfry > 0 && (!chefObj.stirfryVal || chefObj.stirfryVal < recipeData.stirfry)) return false;
+                if (recipeData.boil > 0 && (!chefObj.boilVal || chefObj.boilVal < recipeData.boil)) return false;
+                if (recipeData.knife > 0 && (!chefObj.knifeVal || chefObj.knifeVal < recipeData.knife)) return false;
+                if (recipeData.fry > 0 && (!chefObj.fryVal || chefObj.fryVal < recipeData.fry)) return false;
+                if (recipeData.bake > 0 && (!chefObj.bakeVal || chefObj.bakeVal < recipeData.bake)) return false;
+                if (recipeData.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < recipeData.steam)) return false;
+                return true;
+            }
+
+            function _repairFinalInvalidRecipesSequentially() {
+                for (var ri = 0; ri < _rules.length; ri++) {
+                    if (!_shouldProcessRule(ri)) continue;
+                    var rule = _rules[ri];
+                    var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+                    for (var ci = 0; ci < numChefs; ci++) {
+                        var chefObj = _simState[ri][ci].chefObj;
+                        if (!chefObj || !_simState[ri][ci].chefId) continue;
+                        for (var reci = 0; reci < 3; reci++) {
+                            var currentRecipe = _simState[ri][ci].recipes[reci];
+                            if (!currentRecipe || !currentRecipe.data) continue;
+                            if (_isRecipeSkillQualified(chefObj, currentRecipe.data)) continue;
+
+                            _simSetRecipe(ri, ci, reci, null);
+                            var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 1, true);
+                            if (recipeRanking.length > 0) {
+                                _simSetRecipe(ri, ci, reci, recipeRanking[0].recipeId);
+                            }
+                        }
+                    }
+                }
+            }
             
             // 补充缺失的厨师：如果有位置没有厨师，用未使用的厨师补上并重选菜谱
             var usedChefIds = {};
@@ -5071,6 +5106,8 @@ var BanquetOptimizer = (function() {
                 _simState = _cloneSimState(_bestSimState);
                 _climbRecipeSwap();
             }
+
+            _repairFinalInvalidRecipesSequentially();
             
             // 更新最佳状态
             _bestSimState = _cloneSimState(_simState);
