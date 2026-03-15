@@ -14,9 +14,11 @@
     <script type="text/javascript" src="js/query.guest.js?v=2"></script>
     <script type="text/javascript" src="js/food.min.js?v=267"></script>
     <script type="text/javascript" src="js/query.cultivate.js?v=4"></script>
+    <script type="text/javascript" src="js/query.collection.js?v=1"></script>
     <script type="text/javascript" src="js/banquet.optimizer.js?v=1"></script>
     <script type="text/javascript" src="js/jianghu.optimizer.js?v=1"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=173" />
+    <link rel="stylesheet" type="text/css" href="css/query.collection.css?v=1" />
     <script>
         $(function () {
             $.ajax({
@@ -1035,6 +1037,7 @@
                                         <option value='0'>正常营业</option>
                                         <option value='cultivate'>修炼/神级方案查询</option>
                                         <option value='guest-rate'>贵客率计算/碰瓷查询</option>
+                                        <option value='collection-team'>采集配置查询</option>
                                     </optgroup>
                                     <optgroup label="风云宴"></optgroup>
                                     <optgroup label="年兽"></optgroup>
@@ -1111,9 +1114,6 @@
                             </div>
                             <div class="pane-cal-rules pane-cal-sub hidden">
                                 <div class="header-wrapper">
-                                    <button id="btn-cal-clear-custom" class="btn btn-default" type="button">
-                                        清空自选
-                                    </button>
                                     <div class="inline-wrapper select-wrapper" data-toggle="tooltip" title="菜单显示内容">
                                         <select id="chk-cal-dd-show" class="selectpicker" multiple data-width="fit"
                                             data-dropdown-align-right='auto' data-none-selected-text="菜单显示"
@@ -1274,8 +1274,8 @@
                                     <button id="btn-cal-reset-custom" class="btn btn-default" type="button">
                                         清空过滤
                                     </button>
-                                    <button id="btn-cal-clear-selected" class="btn btn-default" type="button">
-                                        清空场上已选
+                                    <button id="btn-cal-clear-custom" class="btn btn-default" type="button">
+                                        清空自选
                                     </button>
 
                                     <div id="cultivation-mode-switch-wrapper" class="inline-wrapper hidden" style="margin-left: 10px;">
