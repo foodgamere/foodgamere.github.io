@@ -111,11 +111,11 @@
 
     // 自动临时切换到规则0触发基础数据加载，再恢复用户原规则。
     // 作用：首次进入采集编队模式时保证 calCustomRule.rules[0] 结构完整。
-    function bootstrapCollectionRule() {
+    function bootstrapCollectionRule(forceReload) {
         var $select;
         var originalValue;
 
-        if (state.bootstrappingRule || hasCollectionRuleReady()) {
+        if (state.bootstrappingRule || (!forceReload && hasCollectionRuleReady())) {
             return;
         }
 
@@ -137,7 +137,7 @@
             }
             $select.val(originalValue).selectpicker('refresh');
             state.bootstrappingRule = false;
-            load();
+            load(true);
         }
 
         // 轮询等待规则可用，超时后也会恢复页面避免卡死。
@@ -3296,14 +3296,20 @@
     }
 
     // 进入采集编队模式并初始化页面。
-    function load() {
+    function load(forceRefresh) {
         if (!hasCollectionRuleReady()) {
-            bootstrapCollectionRule();
+            bootstrapCollectionRule(forceRefresh);
             return;
         }
 
         ensureRoot();
         loadStoredState();
+        if (forceRefresh) {
+            state.queryLoading = false;
+            state.queryResults = null;
+            state.activePreviewGroup = 'veg';
+            state.sortCache = null;
+        }
         state.settingsExpanded = true;
         scheduleSortCacheRefresh();
 
@@ -4072,7 +4078,7 @@
 
         window.loadCalRule = function() {
             if ($('#select-cal-rule').val() === MODE_VALUE) {
-                load();
+                bootstrapCollectionRule(true);
                 return;
             }
             resetMode();
