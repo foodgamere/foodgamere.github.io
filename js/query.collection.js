@@ -1913,6 +1913,147 @@
         return (values[0] || 0) + (values[1] || 0);
     }
 
+    function getChefUltimateSkillDescriptions(chef, context) {
+        var skillIds = chef && chef.ultimateSkillList ? chef.ultimateSkillList : [];
+        var skills = context && context.gameData && context.gameData.skills ? context.gameData.skills : [];
+        return skillIds.map(function(skillId) {
+            var matched = null;
+            skills.some(function(skill) {
+                if (String(skill.skillId) === String(skillId)) {
+                    matched = String(skill.desc || '');
+                    return true;
+                }
+                return false;
+            });
+            return matched;
+        }).filter(function(desc) {
+            return !!desc;
+        });
+    }
+
+    function createCollectionBonusInfo() {
+        return {
+            meat: 0,
+            fish: 0,
+            veg: 0,
+            creation: 0
+        };
+    }
+
+    function addCollectionBonusValue(bonusInfo, typeLabel, value) {
+        if (typeLabel === '肉') {
+            bonusInfo.meat += value;
+        } else if (typeLabel === '鱼') {
+            bonusInfo.fish += value;
+        } else if (typeLabel === '菜') {
+            bonusInfo.veg += value;
+        } else if (typeLabel === '面') {
+            bonusInfo.creation += value;
+        }
+    }
+
+    function calculateChefGlobalCollectionBonus(chef, context) {
+        var bonusInfo = createCollectionBonusInfo();
+        var descriptions;
+
+        if (!chef || !toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated)) {
+            return bonusInfo;
+        }
+
+        descriptions = getChefUltimateSkillDescriptions(chef, context);
+        descriptions.forEach(function(desc) {
+            var multiMatch = desc.match(/场上所有厨师(肉|鱼|菜|面)和(肉|鱼|菜|面)各\+(\d+)/);
+            var singleMatch = desc.match(/场上所有厨师(肉|鱼|菜|面)(?:类采集|采集)?\+(\d+)/);
+            var value;
+
+            if (multiMatch) {
+                value = toInt(multiMatch[3], 0);
+                addCollectionBonusValue(bonusInfo, multiMatch[1], value);
+                addCollectionBonusValue(bonusInfo, multiMatch[2], value);
+                return;
+            }
+
+            if (singleMatch) {
+                value = toInt(singleMatch[2], 0);
+                addCollectionBonusValue(bonusInfo, singleMatch[1], value);
+            }
+        });
+
+        return bonusInfo;
+    }
+
+    function applyAreaTeamCollectionBonus(selected, areaItem, context) {
+        var totalBonus = createCollectionBonusInfo();
+        var totalValue = 0;
+
+        if (!selected || !selected.length || !areaItem || (areaItem.prefix !== 'veg' && areaItem.prefix !== 'jade')) {
+            return {
+                selected: selected || [],
+                totalValue: 0
+            };
+        }
+
+        selected.forEach(function(item) {
+            if (isEmptyCollectionChef(item)) {
+                return;
+            }
+            var chefBonus = calculateChefGlobalCollectionBonus(item, context);
+            totalBonus.meat += chefBonus.meat;
+            totalBonus.fish += chefBonus.fish;
+            totalBonus.veg += chefBonus.veg;
+            totalBonus.creation += chefBonus.creation;
+        });
+
+        selected.forEach(function(item) {
+            var jadeTarget;
+            if (isEmptyCollectionChef(item)) {
+                item.rawValue = 0;
+                return;
+            }
+
+            item.meatVal = toInt(item.baseMeatVal, toInt(item.meatVal, 0)) + totalBonus.meat;
+            item.fishVal = toInt(item.baseFishVal, toInt(item.fishVal, 0)) + totalBonus.fish;
+            item.vegVal = toInt(item.baseVegVal, toInt(item.vegVal, 0)) + totalBonus.veg;
+            item.creationVal = toInt(item.baseCreationVal, toInt(item.creationVal, 0)) + totalBonus.creation;
+
+            if (areaItem.prefix === 'veg') {
+                if (areaItem.name === '池塘') {
+                    item.rawValue = item.fishVal;
+                } else if (areaItem.name === '牧场' || areaItem.name === '猪圈' || areaItem.name === '鸡舍') {
+                    item.rawValue = item.meatVal;
+                } else if (areaItem.name === '菜棚' || areaItem.name === '菜地' || areaItem.name === '森林') {
+                    item.rawValue = item.vegVal;
+                } else {
+                    item.rawValue = item.creationVal;
+                }
+            } else {
+                jadeTarget = getJadeTargetConfig(areaItem.name);
+                item.rawValue = jadeTarget.keys.reduce(function(sum, key) {
+                    if (key === 'meatVal') {
+                        return sum + item.meatVal;
+                    }
+                    if (key === 'fishVal') {
+                        return sum + item.fishVal;
+                    }
+                    if (key === 'vegVal') {
+                        return sum + item.vegVal;
+                    }
+                    if (key === 'creationVal') {
+                        return sum + item.creationVal;
+                    }
+                    return sum;
+                }, 0);
+            }
+
+            totalValue += item.rawValue;
+        });
+
+        return {
+            selected: selected,
+            totalValue: totalValue
+        };
+    }
+
     // 判断厨师是否“已拥有”（支持本地标记与规则数据混用）。
     function isChefOwnedForQuery(chef, ownedState) {
         var chefId = String(chef.chefId || chef.id || '');
@@ -1975,6 +2116,10 @@
         partialAdds = typeof window.getPartialChefAddsByIds === 'function'
             ? window.getPartialChefAddsByIds(ruleChefs, context.applyUltimate, context.partialUltimateIds)
             : [];
+        partialAdds = (partialAdds || []).filter(function(effect) {
+            var type = String(effect && effect.type || '');
+            return type !== 'Meat' && type !== 'Fish' && type !== 'Vegetable' && type !== 'Creation';
+        });
 
         ruleChefs.forEach(function(chef) {
             var meta;
@@ -2276,6 +2421,7 @@
             name: '',
             rarity: 0,
             isUltimate: false,
+            ultimateSkillList: [],
             collectionExpectation: 0,
             materialExpectation: 0,
             materialGain: 0,
@@ -2290,6 +2436,11 @@
             fishVal: 0,
             vegVal: 0,
             creationVal: 0,
+            baseRawValue: 0,
+            baseMeatVal: 0,
+            baseFishVal: 0,
+            baseVegVal: 0,
+            baseCreationVal: 0,
             isEmpty: true
         };
     }
@@ -2303,6 +2454,7 @@
             name: chef.name,
             rarity: toInt(chef.rarity, 0),
             isUltimate: toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated),
+            ultimateSkillList: cloneData(chef.ultimateSkillList || []),
             collectionExpectation: +(Number(typeof item.expectation === 'number' ? item.expectation : getCollectionExpectation(meta)).toFixed(2)),
             materialExpectation: +(Number(chef.materialExpectation || 0).toFixed(2)),
             materialGain: meta.materialGain || 0,
@@ -2312,12 +2464,17 @@
             detailText: item.detailText,
             valueLabel: item.label,
             rawValue: item.rawValue,
+            baseRawValue: item.rawValue,
             prefix: areaItem.prefix,
             // 添加各项采集点数据（用于菜地区域）
             meatVal: toInt(chef.meatVal, 0),
             fishVal: toInt(chef.fishVal, 0),
             vegVal: toInt(chef.vegVal, 0),
-            creationVal: toInt(chef.creationVal, 0)
+            creationVal: toInt(chef.creationVal, 0),
+            baseMeatVal: toInt(chef.meatVal, 0),
+            baseFishVal: toInt(chef.fishVal, 0),
+            baseVegVal: toInt(chef.vegVal, 0),
+            baseCreationVal: toInt(chef.creationVal, 0)
         };
     }
 
@@ -2400,15 +2557,7 @@
             return buildSelectedCollectionChef(item, areaItem);
         });
 
-        var totalValue = selected.reduce(function(total, item) {
-            return total + item.rawValue;
-        }, 0);
-
-
-        return {
-            selected: selected,
-            totalValue: totalValue
-        };
+        return applyAreaTeamCollectionBonus(selected, areaItem, chefPoolData.context);
     }
 
     // 实验室查询：
@@ -2597,12 +2746,9 @@
             });
         }
 
-        return {
-            selected: selected.map(function(item) {
-                return buildSelectedCollectionChef(item, areaItem);
-            }),
-            totalValue: totalValue
-        };
+        return applyAreaTeamCollectionBonus(selected.map(function(item) {
+            return buildSelectedCollectionChef(item, areaItem);
+        }), areaItem, chefPoolData.context);
     }
 
     // 根据地区名确定结果卡片里的采集维度高亮。
@@ -3704,6 +3850,8 @@
                 totalValue += contribution;
             });
             areaResult.totalValue = totalValue;
+        } else if (areaItem.prefix === 'veg' || areaItem.prefix === 'jade') {
+            areaResult.totalValue = applyAreaTeamCollectionBonus(areaResult.chefs, areaItem, chefPoolData.context).totalValue;
         } else {
             areaResult.totalValue = areaResult.chefs.reduce(function(total, chef) {
                 return total + (isEmptyCollectionChef(chef) ? 0 : chef.rawValue);
@@ -3749,6 +3897,13 @@
                     sourceLabTotal += sourceContribution;
                 });
                 sourceAreaResult.totalValue = sourceLabTotal;
+            } else if (sourceAreaResult.prefix === 'veg' || sourceAreaResult.prefix === 'jade') {
+                sourceAreaResult.totalValue = applyAreaTeamCollectionBonus(sourceAreaResult.chefs, {
+                    name: sourceAreaResult.areaName,
+                    prefix: sourceAreaResult.prefix,
+                    people: sourceAreaResult.people,
+                    capacity: sourceAreaResult.capacity
+                }, chefPoolData.context).totalValue;
             } else {
                 sourceAreaResult.totalValue = sourceAreaResult.chefs.reduce(function(total, chef) {
                     return total + (isEmptyCollectionChef(chef) ? 0 : chef.rawValue);
