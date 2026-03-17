@@ -140,7 +140,6 @@ var OneClickQuery = (function($) {
     
     var settings = $.extend({}, DEFAULT_SETTINGS);
     var isQueryInProgress = false;
-    var ENABLE_QUERY_ASSIGNMENT_DEBUG_LOG = true;
 
     // ========================================
     // 设置存储函数
@@ -258,30 +257,6 @@ var OneClickQuery = (function($) {
         return timeScore + qualityScore + guestCount;
     }
 
-    function debugAssignmentLog() {
-        if (!ENABLE_QUERY_ASSIGNMENT_DEBUG_LOG || typeof console === 'undefined' || !console.log) {
-            return;
-        }
-        console.log.apply(console, arguments);
-    }
-
-    function stringifyDebugData(data) {
-        try {
-            return JSON.stringify(data);
-        } catch (e) {
-            return String(data);
-        }
-    }
-
-    function getChefDebugName(chefData, chefIndex) {
-        if (!chefData) {
-            return '厨师' + (chefIndex + 1);
-        }
-
-        var chef = chefData.original || chefData.enhanced || chefData;
-        return (chef && (chef.name || chef.nickName)) || ('厨师' + (chefIndex + 1));
-    }
-
     /**
      * 为指定符文查找当前可分配的最优菜谱与厨师
      * 会基于当前已分配的菜谱和厨师空位实时计算，避免使用过期候选
@@ -297,63 +272,36 @@ var OneClickQuery = (function($) {
         var bestRank = 0;
         var bestGuestCount = 1;
         var bestChefLoad = 999999;
-        var evaluationLogs = [];
 
         for (var ri = 0; ri < runeRecipes.length; ri++) {
             var recipe = runeRecipes[ri];
-            var recipeLog = {
-                recipeName: recipe.name,
-                recipeId: recipe.recipeId,
-                time: recipe.time || 0,
-                guestCount: 0,
-                evaluations: []
-            };
 
             if (usedRecipeIds[recipe.recipeId]) {
-                recipeLog.skipped = 'recipe_used';
-                evaluationLogs.push(recipeLog);
                 continue;
             }
 
             var guestCount = getRecipeGuestCount(recipe, gameData);
-            recipeLog.guestCount = guestCount;
 
             for (var c = 0; c < enhancedChefs.length; c++) {
                 var chefLoad = enhancedChefs[c].recipes.length;
-                var chefName = getChefDebugName(enhancedChefs[c], c);
-                var evaluation = {
-                    chefIndex: c,
-                    chefName: chefName,
-                    chefLoad: chefLoad
-                };
-
                 if (chefLoad >= 3) {
-                    evaluation.skipped = 'chef_full';
-                    recipeLog.evaluations.push(evaluation);
                     continue;
                 }
 
                 var enhancedChef = enhancedChefs[c].enhanced;
                 var rank = getRecipeRank(enhancedChef, recipe);
-                evaluation.rank = rank;
 
                 if (rank === 0) {
-                    evaluation.skipped = 'rank_0';
-                    recipeLog.evaluations.push(evaluation);
                     continue;
                 }
 
                 var chefHasDivineSkill = hasDivineRecipeSkill(enhancedChef);
-                evaluation.hasDivineSkill = chefHasDivineSkill;
                 if (chefHasDivineSkill && rank < 4) {
-                    evaluation.skipped = 'divine_skill_requires_rank_4';
-                    recipeLog.evaluations.push(evaluation);
                     continue;
                 }
 
                 var totalScore = calculateRecipeScore(recipe, rank, guestCount);
                 var shouldReplace = false;
-                evaluation.score = totalScore;
 
                 if (totalScore > bestScore) {
                     shouldReplace = true;
@@ -373,45 +321,21 @@ var OneClickQuery = (function($) {
                     bestGuestCount = guestCount;
                     bestChefLoad = chefLoad;
                 }
-
-                evaluation.selectedForRune = shouldReplace;
-                recipeLog.evaluations.push(evaluation);
             }
-
-            evaluationLogs.push(recipeLog);
         }
 
         if (!bestRecipe || bestChefIndex < 0) {
-            debugAssignmentLog('[一键查询][符文分配] 符文无可用候选:', rune, evaluationLogs);
             return null;
         }
 
-        var result = {
+        return {
             rune: rune,
             recipe: bestRecipe,
             score: bestScore,
             bestChefIndex: bestChefIndex,
             bestRank: bestRank,
-            guestCount: bestGuestCount,
-            debugEvaluations: evaluationLogs
+            guestCount: bestGuestCount
         };
-
-        debugAssignmentLog(
-            '[一键查询][符文分配] 符文候选结果:',
-            rune,
-            '=>',
-            bestRecipe.name,
-            '厨师=',
-            getChefDebugName(enhancedChefs[bestChefIndex], bestChefIndex),
-            'rank=',
-            bestRank,
-            'score=',
-            bestScore,
-            '详情JSON=',
-            stringifyDebugData(evaluationLogs)
-        );
-
-        return result;
     }
     
     /**
@@ -2211,17 +2135,6 @@ var OneClickQuery = (function($) {
                 
             }
 
-            debugAssignmentLog('[一键查询][符文分配] 各符文候选菜谱JSON=', stringifyDebugData((function() {
-                var summary = {};
-                for (var i = 0; i < selectedRunes.length; i++) {
-                    var runeName = selectedRunes[i];
-                    summary[runeName] = (recipesByRune[runeName] || []).map(function(recipe) {
-                        return recipe.name + '(t=' + (recipe.time || 0) + ',star=' + (recipe.rarity || 5) + ')';
-                    });
-                }
-                return summary;
-            })()));
-            
             // 保存无法制作信息到结果中
             var cannotMakeCount = Object.keys(cannotMakeRecipes).length;
             if (cannotMakeCount > 0) {
@@ -2248,7 +2161,6 @@ var OneClickQuery = (function($) {
 
                 while (continueAllocation) {
                     var bestRoundItem = null;
-                    var roundCandidates = [];
 
                     // 每次分配后都为剩余符文实时重算最优候选，避免候选过期
                     for (var r = 0; r < selectedRunes.length; r++) {
@@ -2264,41 +2176,16 @@ var OneClickQuery = (function($) {
                         );
 
                         if (!candidate) continue;
-                        roundCandidates.push({
-                            rune: candidate.rune,
-                            recipe: candidate.recipe.name,
-                            chef: getChefDebugName(enhancedChefs[candidate.bestChefIndex], candidate.bestChefIndex),
-                            chefIndex: candidate.bestChefIndex,
-                            rank: candidate.bestRank,
-                            score: candidate.score,
-                            guestCount: candidate.guestCount
-                        });
 
                         if (!bestRoundItem || candidate.score > bestRoundItem.score) {
                             bestRoundItem = candidate;
                         }
                     }
 
-                    debugAssignmentLog('[一键查询][符文分配] 第' + round + '轮当前候选JSON=', stringifyDebugData(roundCandidates));
-
                     // 本轮没有任何可继续分配的候选
                     if (!bestRoundItem) {
                         break;
                     }
-
-                    debugAssignmentLog(
-                        '[一键查询][符文分配] 第' + round + '轮选中JSON=',
-                        stringifyDebugData({
-                            rune: bestRoundItem.rune,
-                            recipe: bestRoundItem.recipe.name,
-                            chef: getChefDebugName(enhancedChefs[bestRoundItem.bestChefIndex], bestRoundItem.bestChefIndex),
-                            chefIndex: bestRoundItem.bestChefIndex,
-                            rank: bestRoundItem.bestRank,
-                            score: bestRoundItem.score,
-                            currentChefLoad: enhancedChefs[bestRoundItem.bestChefIndex].recipes.length,
-                            guestCount: bestRoundItem.guestCount
-                        })
-                    );
 
                     enhancedChefs[bestRoundItem.bestChefIndex].recipes.push({
                         recipe: bestRoundItem.recipe,
@@ -2345,16 +2232,6 @@ var OneClickQuery = (function($) {
                     continueAllocation = false;
                 }
             }
-
-            debugAssignmentLog('[一键查询][符文分配] 最终厨师分配JSON=', stringifyDebugData(enhancedChefs.map(function(item, index) {
-                return {
-                    chef: getChefDebugName(item, index),
-                    chefIndex: index,
-                    recipes: item.recipes.map(function(recipeData) {
-                        return recipeData.recipe.name + '[' + recipeData.rune + ',rank=' + recipeData.rank + ']';
-                    })
-                };
-            })));
             
             
             // 构建结果（重新计算份数和制作时间）
