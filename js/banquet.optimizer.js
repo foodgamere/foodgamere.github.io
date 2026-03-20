@@ -58,12 +58,12 @@
  *       - 仅在前面阶段有改进时执行（条件执行）
  * 
  * 7. 种子间优化：
- *    - 收敛提前终止：如果某种子最终分数与之前某种子完全相同，跳过剩余种子
- *    - 分数过低跳过：起始分 < 全局最佳90% 直接跳过
+ *    - 收敛提前终止：如果某种子最终状态与之前某种子完全相同，跳过剩余种子
+ *    - 分数过低跳过：仅跳过显著落后的种子，避免误杀异构高分组合
  * 
  * === 关键参数（CONFIG） ===
- * - recipeSeedK: 5     种子菜谱数
- * - chefPerSeed: 3     每种子试几个厨师
+ * - recipeSeedK: 6     种子菜谱数
+ * - chefPerSeed: 5     每种子试几个厨师
  * - recipeTopN: 5      菜谱排名取前N（穷举搜索用）
  * - maxRounds: 5       爬山轮数
  * - refineIter: 5      精调迭代轮数
@@ -85,22 +85,46 @@ var BanquetOptimizer = (function() {
     'use strict';
     
     var _isRunning = false;
+    var _isFinishing = false;
     var _targetScore = null;
     var _bestResult = null;
     var _gameData = null;
     var _rules = [];
     var _bestScore = 0;
     var _guestFilter = null;
+    var _topCandidateMeta = [];
+    var _activeClimbRound = -1;
+    var _disableFullGuestRebuild = false;
+    var _fullGuestRebuildAttempts = 0;
+    var _fullGuestRebuildHits = 0;
 
     var CONFIG = {
-        recipeSeedK: 5,       // 种子菜谱数
-        chefPerSeed: 3,      // 每种子试几个厨师
+        recipeSeedK: 6,       // 种子菜谱数
+        chefPerSeed: 5,      // 每种子试几个厨师
         recipeTopN: 5,       // 菜谱排名取前N（穷举搜索用）
         maxRounds: 5,        // 爬山轮数
         refineIter: 5,       // 精调迭代轮数
         perturbRounds: 30,   // 扰动重建轮数（随机扰动补充用）
         perturbPositions: 2, // 每轮扰动位置数
-        preFilterTop: 50     // 预过滤候选数
+        preFilterTop: 50,    // 预过滤候选数
+        initKeepTop: 18,     // 初始化后保留多少个候选进入深搜
+        chefClimbTry: 16,    // 厨师爬山最多尝试的候选厨师数
+        jointChefTry: 16,    // 联合替换最多尝试的候选厨师数
+        chefPoolRarityTop: 24, // 按稀有度补充到厨师候选池的数量
+        chefSearchRankTop: 8, // 厨师搜索时优先保留的评分候选数
+        chefSearchAuraTop: 6, // 厨师搜索时强制混入的光环候选数
+        chefSearchRarityTop: 10, // 厨师搜索时强制混入的高稀有度候选数
+        rebuildFirstChefTop: 6, // 整贵客重建时尝试的起手厨师数
+        enableFullGuestRebuild: false, // 整贵客重建在最新日志里持续空跑，默认关闭
+        recipeClimbTry: 16, // 单菜爬山时尝试的候选菜谱数
+        fixedChefRecipeSeedTop: 6, // 固定厨师重建时每个种子位尝试的菜谱数
+        fixedChefRecipeSlotKeepTop: 7, // 固定厨师重建时每个位置保留的候选菜谱组合数
+        chefPermutationTry: 1, // 同组三厨师换位后，最多深入重建多少个高潜排列
+        slotIntentHeuristicWeight: 1200, // 固定厨师重建时意图契合度折算权重
+        seedSkipInitRatio: 0.85, // 种子初始分低于最佳多少时跳过
+        seedSkipAfterClimbNoImproveRatio: 0.86, // 爬山后无提升时的跳过阈值
+        seedSkipAfterClimbHardRatio: 0.83, // 爬山后绝对过低时的跳过阈值
+        lightSeedRatio: 0.92 // 轻量种子的判定阈值
     };
 
     // ==================== 风云宴级别/档位分数数据 ====================
@@ -362,6 +386,643 @@ var BanquetOptimizer = (function() {
     }
 
     var _timeStats = {};
+    var _cookSkillKeys = ['stirfry', 'boil', 'knife', 'fry', 'bake', 'steam'];
+    var _cookSkillNames = {
+        stirfry: '炒',
+        boil: '煮',
+        knife: '切',
+        fry: '炸',
+        bake: '烤',
+        steam: '蒸'
+    };
+
+    function _debugLog() {
+        return;
+    }
+
+    function _getRuleName(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        if (!rule) return '贵客' + (ruleIndex + 1);
+        return rule.Title || rule.Name || ('贵客' + (ruleIndex + 1));
+    }
+
+    function _getEquipName(equipObj) {
+        if (!equipObj) return '';
+        return equipObj.name || equipObj.Name || equipObj.title || '';
+    }
+
+    function _getIntentById(intentId) {
+        if (!_gameData || !_gameData.intents) return null;
+        for (var i = 0; i < _gameData.intents.length; i++) {
+            if (_gameData.intents[i].intentId === intentId) return _gameData.intents[i];
+        }
+        return null;
+    }
+
+    function _getBuffById(buffId) {
+        if (!_gameData || !_gameData.buffs) return null;
+        for (var i = 0; i < _gameData.buffs.length; i++) {
+            if (_gameData.buffs[i].buffId === buffId) return _gameData.buffs[i];
+        }
+        return null;
+    }
+
+    function _formatEffectSummary(effect) {
+        if (!effect) return '';
+        var suffix = [];
+        if (effect.condition) suffix.push('条件=' + effect.condition);
+        if (effect.conditionValue !== undefined && effect.conditionValue !== null && effect.conditionValue !== '') {
+            suffix.push('条件值=' + effect.conditionValue);
+        }
+        if (effect.tag) suffix.push('标签=' + effect.tag);
+        return effect.type + ':' + (effect.value !== undefined ? effect.value : '') + (suffix.length ? '(' + suffix.join(',') + ')' : '');
+    }
+
+    function _summarizeChefSkillValues(chefObj) {
+        if (!chefObj) return {};
+        var result = {};
+        for (var i = 0; i < _cookSkillKeys.length; i++) {
+            var key = _cookSkillKeys[i];
+            result[_cookSkillNames[key]] = chefObj[key + 'Val'] || chefObj[key] || 0;
+        }
+        return result;
+    }
+
+    function _summarizeAmberSkill(amberData, level) {
+        if (!amberData) return null;
+        var effectList = [];
+        if (amberData.allEffect && amberData.allEffect.length > 0) {
+            var levelIndex = Math.max(0, Math.min((level || 1) - 1, amberData.allEffect.length - 1));
+            var effects = amberData.allEffect[levelIndex] || [];
+            for (var i = 0; i < effects.length; i++) {
+                effectList.push(_formatEffectSummary(effects[i]));
+            }
+        }
+        return {
+            name: amberData.name || amberData.title || amberData.skillName || amberData.desc || (effectList[0] || '未命名胚玉'),
+            effects: effectList
+        };
+    }
+
+    function _summarizeChefCultivation(slot) {
+        if (!slot || !slot.chefObj || !slot.chefObj.disk) return { level: 0, maxLevel: 0, amberSkills: [] };
+        var disk = slot.chefObj.disk;
+        var amberSkills = [];
+        if (disk.ambers) {
+            for (var i = 0; i < disk.ambers.length; i++) {
+                var amber = disk.ambers[i];
+                if (!amber || !amber.data) continue;
+                amberSkills.push(_summarizeAmberSkill(amber.data, disk.level || 1));
+            }
+        }
+        return {
+            level: disk.level || 0,
+            maxLevel: disk.maxLevel || 0,
+            amberSkills: amberSkills
+        };
+    }
+
+    function _describeIntent(intent) {
+        if (!intent) return null;
+        return {
+            desc: intent.desc || intent.effectType || '',
+            effectType: intent.effectType || '',
+            effectValue: intent.effectValue,
+            conditionType: intent.conditionType || '',
+            conditionValue: intent.conditionValue
+        };
+    }
+
+    function _describeIntentAdd(intentOrBuff) {
+        if (!intentOrBuff) return '';
+        var desc = intentOrBuff.desc || intentOrBuff.effectType || intentOrBuff.type || '';
+        if (intentOrBuff.effectType) {
+            return desc + '[' + intentOrBuff.effectType + ']';
+        }
+        if (intentOrBuff.type) {
+            return desc + '[' + intentOrBuff.type + ']';
+        }
+        return desc;
+    }
+
+    function _getPositionIntents(ruleIndex, chefIndex) {
+        var intents = [];
+        var rule = _rules[ruleIndex];
+        if (!rule || !rule.IntentList || !rule.IntentList[chefIndex]) return intents;
+        var intentIds = rule.IntentList[chefIndex];
+        for (var i = 0; i < intentIds.length; i++) {
+            var intent = _getIntentById(intentIds[i]);
+            if (intent) intents.push(intent);
+        }
+        return intents;
+    }
+
+    function _buildRecipeSkillFit(recipeData, chefObj) {
+        var result = [];
+        if (!recipeData || !chefObj) return result;
+        for (var i = 0; i < _cookSkillKeys.length; i++) {
+            var key = _cookSkillKeys[i];
+            var need = recipeData[key] || 0;
+            if (!need) continue;
+            var actual = chefObj[key + 'Val'] || 0;
+            result.push({
+                skill: _cookSkillNames[key],
+                required: need,
+                actual: actual,
+                margin: actual - need
+            });
+        }
+        return result;
+    }
+
+    function _buildRecipeIntentFit(ruleIndex, chefIndex, recipeIndex, slotState, slotRecipes, ownIntents, nextDishIntents, slotIntentAdds) {
+        var rec = slotState.recipes[recipeIndex];
+        if (!rec || !rec.data) return null;
+
+        var ownHits = [];
+        for (var i = 0; i < ownIntents.length; i++) {
+            var intent = ownIntents[i];
+            if (!checkIntent(intent, slotRecipes, recipeIndex, slotState.chefObj)) continue;
+
+            var hit = _describeIntent(intent);
+            hit.effective = true;
+            if (intent.effectType === 'CreateIntent') {
+                if (recipeIndex >= 2) {
+                    hit.effective = false;
+                    hit.note = '最后一道触发，下道意图浪费';
+                } else {
+                    var childIntent = _getIntentById(intent.effectValue);
+                    hit.followUpMatched = !!(childIntent && slotRecipes[recipeIndex + 1] && slotRecipes[recipeIndex + 1].data && checkIntent(childIntent, slotRecipes, recipeIndex + 1, slotState.chefObj));
+                    if (!hit.followUpMatched) {
+                        hit.effective = false;
+                        hit.note = '下道菜未命中子意图';
+                    }
+                }
+            }
+            ownHits.push(hit);
+        }
+
+        var receivedAdds = [];
+        for (var ai = 0; ai < slotIntentAdds.length; ai++) {
+            receivedAdds.push(_describeIntentAdd(slotIntentAdds[ai]));
+        }
+
+        var nextDishTriggerWeight = recipeIndex >= 2 ? 0 : _canTriggerNextDishIntent(rec.data, nextDishIntents);
+        var fitScore = receivedAdds.length * 15 + nextDishTriggerWeight;
+        for (var hi = 0; hi < ownHits.length; hi++) {
+            if (ownHits[hi].effective === false) {
+                if (ownHits[hi].effectType === 'CreateIntent') {
+                    fitScore -= ownHits[hi].note === '最后一道触发，下道意图浪费' ? 60 : 40;
+                } else {
+                    fitScore += 5;
+                }
+            } else if (ownHits[hi].effectType === 'CreateIntent') {
+                fitScore += ownHits[hi].followUpMatched ? 45 : 25;
+            } else if (ownHits[hi].effectType === 'CreateBuff') {
+                fitScore += 25;
+            } else {
+                fitScore += 20;
+            }
+        }
+
+        return {
+            recipe: rec.data.name,
+            qty: rec.quantity,
+            max: rec.max,
+            satiety: rec.satiety || 0,
+            skillFit: _buildRecipeSkillFit(rec.data, slotState.chefObj),
+            ownIntentHits: ownHits,
+            receivedIntentAdds: receivedAdds,
+            nextDishTriggerWeight: nextDishTriggerWeight,
+            fitScore: fitScore
+        };
+    }
+
+    function _calcRuleIntentHeuristic(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !ruleState) return 0;
+
+        _applyChefData(ruleIndex);
+        var customArr = [];
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            customArr.push({
+                chef: ruleState[ci].chefObj || {},
+                equip: ruleState[ci].equipObj || {},
+                recipes: ruleState[ci].recipes,
+                condiment: {}
+            });
+        }
+        var intentAdds = getIntentAdds(ruleIndex, customArr, _gameData, false);
+        var totalFit = 0;
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            var slotState = ruleState[ci];
+            var ownIntents = _getPositionIntents(ruleIndex, ci);
+            var nextDishIntents = _analyzeNextDishIntents(ruleIndex, ci);
+            for (var reci = 0; reci < 3; reci++) {
+                var recipeFit = _buildRecipeIntentFit(
+                    ruleIndex,
+                    ci,
+                    reci,
+                    slotState,
+                    slotState.recipes,
+                    ownIntents,
+                    nextDishIntents,
+                    intentAdds[3 * ci + reci] || []
+                );
+                if (recipeFit) totalFit += recipeFit.fitScore || 0;
+            }
+        }
+        return totalFit;
+    }
+
+    function _buildRuleIntentDiagnostics(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !ruleState) return null;
+
+        _applyChefData(ruleIndex);
+        var customArr = [];
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            customArr.push({
+                chef: ruleState[ci].chefObj || {},
+                equip: ruleState[ci].equipObj || {},
+                recipes: ruleState[ci].recipes,
+                condiment: {}
+            });
+        }
+        var intentAdds = getIntentAdds(ruleIndex, customArr, _gameData, false);
+        var slots = [];
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            var slotState = ruleState[ci];
+            var ownIntents = _getPositionIntents(ruleIndex, ci);
+            var nextDishIntents = _analyzeNextDishIntents(ruleIndex, ci);
+            var strategy = _analyzeIntents(ruleIndex, ci);
+            var recipeFits = [];
+            var slotFitScore = 0;
+            for (var reci = 0; reci < 3; reci++) {
+                var recipeFit = _buildRecipeIntentFit(
+                    ruleIndex,
+                    ci,
+                    reci,
+                    slotState,
+                    slotState.recipes,
+                    ownIntents,
+                    nextDishIntents,
+                    intentAdds[3 * ci + reci] || []
+                );
+                if (!recipeFit) continue;
+                slotFitScore += recipeFit.fitScore || 0;
+                recipeFits.push(recipeFit);
+            }
+            slots.push({
+                position: ci + 1,
+                chef: slotState.chefId ? _getChefNameById(slotState.chefId) : '未选择',
+                equip: _getEquipName(slotState.equipObj),
+                chefSkills: _summarizeChefSkillValues(slotState.chefObj),
+                cultivation: _summarizeChefCultivation(slotState),
+                strategy: {
+                    seedRecipeIndex: (strategy.seedRecipeIndex || 0) + 1,
+                    fillOrder: strategy.fillOrder,
+                    intentInfo: strategy.intentInfo || '',
+                    prePlace: (strategy.prePlaceList || []).map(function(item) {
+                        return {
+                            recipeIndex: item.recipeIndex + 1,
+                            desc: item.desc || ''
+                        };
+                    })
+                },
+                intents: ownIntents.map(_describeIntent),
+                nextDishIntents: nextDishIntents.map(function(item) {
+                    return {
+                        desc: item.desc || '',
+                        intentType: item.intentType || '',
+                        conditionType: item.conditionType || '',
+                        conditionValue: item.conditionValue,
+                        weight: item.weight || 0
+                    };
+                }),
+                recipeFits: recipeFits,
+                slotFitScore: slotFitScore
+            });
+        }
+        return {
+            guest: _getRuleName(ruleIndex),
+            slots: slots
+        };
+    }
+
+    function _buildIntentDiagnosticsPayload(state, extra) {
+        var payload = { rules: [] };
+        var savedSimState = _simState;
+        var normalizedState = _cloneSimState(state);
+        try {
+            _simState = normalizedState;
+            for (var ri = 0; ri < _rules.length; ri++) {
+                if (!_shouldProcessRule(ri)) continue;
+                payload.rules.push(_buildRuleIntentDiagnostics(ri));
+            }
+        } catch (e) {
+            payload.error = e && e.message ? e.message : String(e);
+        } finally {
+            _simState = savedSimState;
+        }
+        if (extra) payload.extra = extra;
+        return payload;
+    }
+
+    function _logIntentDiagnostics() {
+        return;
+    }
+
+    function _summarizeState(state) {
+        if (!state) return [];
+        var summary = [];
+        for (var ri = 0; ri < state.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
+            var ruleSummary = {
+                guest: _getRuleName(ri),
+                slots: []
+            };
+            for (var ci = 0; ci < state[ri].length; ci++) {
+                var slot = state[ri][ci];
+                var recipes = [];
+                for (var reci = 0; reci < slot.recipes.length; reci++) {
+                    var rec = slot.recipes[reci];
+                    recipes.push(rec && rec.data ? {
+                        name: rec.data.name,
+                        qty: rec.quantity,
+                        max: rec.max,
+                        satiety: rec.satiety || 0
+                    } : null);
+                }
+                ruleSummary.slots.push({
+                    position: ci + 1,
+                    chef: slot.chefId ? _getChefNameById(slot.chefId) : '未选择',
+                    equip: _getEquipName(slot.equipObj),
+                    recipes: recipes
+                });
+            }
+            summary.push(ruleSummary);
+        }
+        return summary;
+    }
+
+    function _getSatietySummary(state) {
+        if (!state) return [];
+        var result = [];
+        for (var ri = 0; ri < state.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
+            var total = 0;
+            for (var ci = 0; ci < state[ri].length; ci++) {
+                for (var reci = 0; reci < state[ri][ci].recipes.length; reci++) {
+                    total += state[ri][ci].recipes[reci].satiety || 0;
+                }
+            }
+            result.push({
+                guest: _getRuleName(ri),
+                current: total,
+                target: _rules[ri] ? (_rules[ri].Satiety || 0) : 0
+            });
+        }
+        return result;
+    }
+
+    function _buildSnapshotPayload(state, score, extra) {
+        var payload = {
+            score: score,
+            satiety: [],
+            state: []
+        };
+        if (!state) {
+            if (extra) payload.extra = extra;
+            return payload;
+        }
+        var savedSimState = _simState;
+        var normalizedState = _cloneSimState(state);
+        try {
+            _simState = normalizedState;
+            for (var ri = 0; ri < _rules.length; ri++) {
+                if (!_shouldProcessRule(ri)) continue;
+                _calcRuleScore(ri, true);
+            }
+            payload.satiety = _getSatietySummary(normalizedState);
+            payload.state = _summarizeState(normalizedState);
+        } catch (e) {
+            payload.satiety = _getSatietySummary(state);
+            payload.state = _summarizeState(state);
+            payload.snapshotError = e && e.message ? e.message : String(e);
+        } finally {
+            _simState = savedSimState;
+        }
+        if (extra) payload.extra = extra;
+        return payload;
+    }
+
+    function _getStateSignature(state) {
+        if (!state) return '';
+        var parts = [];
+        for (var ri = 0; ri < state.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
+            for (var ci = 0; ci < state[ri].length; ci++) {
+                var slot = state[ri][ci];
+                var recipeIds = [];
+                for (var reci = 0; reci < slot.recipes.length; reci++) {
+                    recipeIds.push(slot.recipes[reci] && slot.recipes[reci].data ? slot.recipes[reci].data.recipeId : 0);
+                }
+                parts.push([ri, ci, slot.chefId || 0].concat(recipeIds).join(':'));
+            }
+        }
+        return parts.join('|');
+    }
+
+    function _cloneSlotState(slot) {
+        return {
+            chefId: slot.chefId,
+            chefObj: slot.chefObj ? JSON.parse(JSON.stringify(slot.chefObj)) : null,
+            equipObj: slot.equipObj ? JSON.parse(JSON.stringify(slot.equipObj)) : {},
+            recipes: [
+                {
+                    data: slot.recipes[0].data,
+                    quantity: slot.recipes[0].quantity,
+                    max: slot.recipes[0].max,
+                    satiety: slot.recipes[0].satiety
+                },
+                {
+                    data: slot.recipes[1].data,
+                    quantity: slot.recipes[1].quantity,
+                    max: slot.recipes[1].max,
+                    satiety: slot.recipes[1].satiety
+                },
+                {
+                    data: slot.recipes[2].data,
+                    quantity: slot.recipes[2].quantity,
+                    max: slot.recipes[2].max,
+                    satiety: slot.recipes[2].satiety
+                }
+            ]
+        };
+    }
+
+    function _restoreSlotState(ruleIndex, chefIndex, savedSlot) {
+        _simState[ruleIndex][chefIndex] = _cloneSlotState(savedSlot);
+    }
+
+    function _clearSlotRecipes(ruleIndex, chefIndex) {
+        for (var reci = 0; reci < 3; reci++) {
+            _simState[ruleIndex][chefIndex].recipes[reci] = {data: null, quantity: 0, max: 0, satiety: 0};
+        }
+    }
+
+    function _getSlotRecipeSignature(slot) {
+        if (!slot || !slot.recipes) return '';
+        var parts = [];
+        for (var i = 0; i < slot.recipes.length; i++) {
+            parts.push(slot.recipes[i] && slot.recipes[i].data ? slot.recipes[i].data.recipeId : 0);
+        }
+        return parts.join(':');
+    }
+
+    function _getUsedRecipeIdsExcludingPosition(state, excludeRuleIndex, excludeChefIndex, excludeRecipeIndex) {
+        var used = {};
+        if (!state) return used;
+        for (var ri = 0; ri < state.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
+            for (var ci = 0; ci < state[ri].length; ci++) {
+                for (var reci = 0; reci < 3; reci++) {
+                    if (ri === excludeRuleIndex && ci === excludeChefIndex && reci === excludeRecipeIndex) continue;
+                    var rec = state[ri][ci].recipes[reci];
+                    if (rec && rec.data && rec.data.recipeId) {
+                        used[rec.data.recipeId] = true;
+                    }
+                }
+            }
+        }
+        return used;
+    }
+
+    function _getSlotRecipeIds(slot) {
+        var ids = [];
+        if (!slot || !slot.recipes) return ids;
+        for (var i = 0; i < slot.recipes.length; i++) {
+            if (slot.recipes[i] && slot.recipes[i].data && slot.recipes[i].data.recipeId) {
+                ids.push(slot.recipes[i].data.recipeId);
+            }
+        }
+        return ids;
+    }
+
+    function _canUseSlotWithoutDuplicate(usedRecipeIds, slot) {
+        var localSeen = {};
+        var slotRecipeIds = _getSlotRecipeIds(slot);
+        for (var i = 0; i < slotRecipeIds.length; i++) {
+            var recipeId = slotRecipeIds[i];
+            if (usedRecipeIds[recipeId] || localSeen[recipeId]) return false;
+            localSeen[recipeId] = true;
+        }
+        return true;
+    }
+
+    function _refillRecipesForCurrentChef(ruleIndex, chefIndex) {
+        var strategy = _analyzeIntents(ruleIndex, chefIndex);
+        _clearSlotRecipes(ruleIndex, chefIndex);
+        if (strategy.prePlaceList.length > 0) {
+            for (var pp = 0; pp < strategy.prePlaceList.length; pp++) {
+                var prePlace = strategy.prePlaceList[pp];
+                var prePlaceRecipeId = _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
+                if (prePlaceRecipeId) {
+                    _simSetRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlaceRecipeId);
+                }
+            }
+        }
+        var seedRecipeIdx = strategy.seedRecipeIndex;
+        var seedRanking = _fastGetRecipeRanking(ruleIndex, chefIndex, seedRecipeIdx, 1, true);
+        if (seedRanking.length > 0) {
+            _simSetRecipe(ruleIndex, chefIndex, seedRecipeIdx, seedRanking[0].recipeId);
+        }
+        _greedyFillRecipesOrdered(ruleIndex, chefIndex, strategy.fillOrder, seedRecipeIdx);
+    }
+
+    function _getChefSearchCandidates(ruleIndex, chefIndex, maxCandidates) {
+        var rule = _rules[ruleIndex];
+        var pool = [];
+        var seen = {};
+        var rankTop = Math.max(1, Math.min(CONFIG.chefSearchRankTop || maxCandidates, maxCandidates));
+        var auraTop = Math.max(0, Math.min(CONFIG.chefSearchAuraTop || 0, maxCandidates));
+        var rarityTop = Math.max(0, Math.min(CONFIG.chefSearchRarityTop || CONFIG.chefPoolRarityTop, CONFIG.chefPoolRarityTop, maxCandidates));
+
+        function addChef(chefId) {
+            if (!chefId || seen[chefId]) return;
+            seen[chefId] = true;
+            pool.push(chefId);
+        }
+
+        var ranking = _fastGetChefRanking(ruleIndex, chefIndex, true);
+        for (var i = 0; i < ranking.length && i < rankTop; i++) {
+            addChef(ranking[i].chefId);
+        }
+
+        var auraChefs = _analyzePriceAuraChefs(ruleIndex);
+        for (var ai = 0; ai < auraChefs.length && ai < auraTop; ai++) {
+            addChef(auraChefs[ai].chefId);
+        }
+
+        var rarityChefs = [];
+        for (var ci = 0; ci < rule.chefs.length; ci++) {
+            var chef = rule.chefs[ci];
+            if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
+            rarityChefs.push(chef);
+        }
+        rarityChefs.sort(function(a, b) {
+            var rarDiff = (b.rarity || 0) - (a.rarity || 0);
+            if (rarDiff !== 0) return rarDiff;
+            return (b.skill || 0) - (a.skill || 0);
+        });
+        for (var ri = 0; ri < rarityChefs.length && ri < rarityTop; ri++) {
+            addChef(rarityChefs[ri].chefId);
+        }
+
+        for (var i = rankTop; i < ranking.length && pool.length < maxCandidates; i++) {
+            addChef(ranking[i].chefId);
+        }
+        for (var ai = auraTop; ai < auraChefs.length && pool.length < maxCandidates; ai++) {
+            addChef(auraChefs[ai].chefId);
+        }
+        for (var ri = rarityTop; ri < rarityChefs.length && ri < CONFIG.chefPoolRarityTop && pool.length < maxCandidates; ri++) {
+            addChef(rarityChefs[ri].chefId);
+        }
+
+        if (pool.length > maxCandidates) pool.length = maxCandidates;
+        return pool;
+    }
+
+    function _buildIndexPermutations(length) {
+        var results = [];
+        var used = {};
+        var current = [];
+
+        function dfs() {
+            if (current.length >= length) {
+                results.push(current.slice());
+                return;
+            }
+            for (var i = 0; i < length; i++) {
+                if (used[i]) continue;
+                used[i] = true;
+                current.push(i);
+                dfs();
+                current.pop();
+                used[i] = false;
+            }
+        }
+
+        dfs();
+        return results;
+    }
+
+    function _logStateSnapshot() {
+        return;
+    }
     
     // ==================== 内存计算层 ====================
     // 
@@ -391,6 +1052,7 @@ var BanquetOptimizer = (function() {
      */
     function _isAllSatietyOk() {
         for (var ri = 0; ri < _rules.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             var rule = _rules[ri];
             if (!rule.Satiety) {
                 continue; // 没有饱食度要求的跳过
@@ -417,6 +1079,7 @@ var BanquetOptimizer = (function() {
      */
     function _isSatietyDiffAcceptable() {
         for (var ri = 0; ri < _rules.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             var rule = _rules[ri];
             if (!rule.Satiety) continue;
             
@@ -451,6 +1114,7 @@ var BanquetOptimizer = (function() {
         _simState = null;
         _bestSimState = null;
         _topCandidates = [];
+        _topCandidateMeta = [];
         
         if (typeof calCustomRule !== 'undefined' && calCustomRule && calCustomRule.rules) {
             _rules = calCustomRule.rules;
@@ -543,6 +1207,19 @@ var BanquetOptimizer = (function() {
             }
             _menusByRule.push(menus);
         }
+
+        _debugLog('init', '初始化完成', {
+            targetRules: _rules.map(function(rule, index) {
+                return {
+                    guest: _getRuleName(index),
+                    chefs: rule.chefs ? rule.chefs.length : 0,
+                    menus: _menusByRule[index] ? _menusByRule[index].length : 0,
+                    satiety: rule.Satiety || 0
+                };
+            }),
+            filter: _guestFilter,
+            config: _cachedConfig
+        });
         
         return true;
     }
@@ -552,6 +1229,69 @@ var BanquetOptimizer = (function() {
     function _shouldProcessRule(ruleIndex) {
         if (_guestFilter === null) return true;
         return ruleIndex === _guestFilter;
+    }
+
+    function _getActiveRuleCount() {
+        var count = 0;
+        for (var ri = 0; ri < _rules.length; ri++) {
+            if (_shouldProcessRule(ri)) count++;
+        }
+        return count;
+    }
+
+    function _isSingleGuestMode() {
+        return _getActiveRuleCount() <= 1;
+    }
+
+    function _getRuntimeConfigValue(key) {
+        var baseValue = CONFIG[key];
+        if (_isSingleGuestMode()) {
+            var singleGuestOverrides = {
+            recipeSeedK: 5,
+            chefPerSeed: 4,
+            maxRounds: 4,
+            refineIter: 4,
+            initKeepTop: 8,
+            chefClimbTry: 10,
+            jointChefTry: 0,
+            rebuildFirstChefTop: 6,
+            recipeClimbTry: 10,
+            fixedChefRecipeSeedTop: 4,
+            fixedChefRecipeSlotKeepTop: 5,
+            chefPermutationTry: 2
+        };
+            baseValue = singleGuestOverrides.hasOwnProperty(key) ? singleGuestOverrides[key] : baseValue;
+        }
+
+        if (_activeClimbRound >= 1) {
+            var laterRoundOverrides = {
+                chefClimbTry: 12,
+                jointChefTry: 10,
+                recipeClimbTry: 12,
+                fixedChefRecipeSeedTop: 5,
+                fixedChefRecipeSlotKeepTop: 6,
+                chefPermutationTry: 1
+            };
+            if (laterRoundOverrides.hasOwnProperty(key)) {
+                baseValue = laterRoundOverrides[key];
+            }
+        }
+
+        if (_activeClimbRound >= 2) {
+            var deepRoundOverrides = {
+                chefClimbTry: 10,
+                jointChefTry: 8,
+                recipeClimbTry: 10,
+                fixedChefRecipeSeedTop: 4,
+                fixedChefRecipeSlotKeepTop: 5,
+                chefPermutationTry: 1
+            };
+            if (deepRoundOverrides.hasOwnProperty(key)) {
+                baseValue = deepRoundOverrides[key];
+            }
+        }
+
+        return baseValue;
     }
 
     /**
@@ -865,6 +1605,69 @@ var BanquetOptimizer = (function() {
         return _calcRuleScore(ruleIndex, true);
     }
 
+    function _buildRuleBreakdown(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !ruleState) return null;
+        
+        _applyChefData(ruleIndex);
+        var customArr = [];
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            customArr.push({
+                chef: ruleState[ci].chefObj || {},
+                equip: ruleState[ci].equipObj || {},
+                recipes: ruleState[ci].recipes,
+                condiment: {}
+            });
+        }
+        var partialRecipeAdds = getPartialRecipeAdds(customArr, rule);
+        var intentAdds = getIntentAdds(ruleIndex, customArr, _gameData, false);
+        var dishes = [];
+        var dishSubtotal = 0;
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            for (var reci = 0; reci < 3; reci++) {
+                var rec = ruleState[ci].recipes[reci];
+                if (!rec || !rec.data) continue;
+                var g = getRecipeResult(
+                    ruleState[ci].chefObj,
+                    ruleState[ci].equipObj,
+                    rec.data,
+                    rec.quantity,
+                    rec.max,
+                    rule.materials,
+                    rule,
+                    rule.decorationEffect,
+                    null,
+                    true,
+                    customArr[ci].recipes,
+                    partialRecipeAdds[3 * ci + reci],
+                    intentAdds[3 * ci + reci]
+                );
+                var actAdd = (g.data && g.data.activityAddition) ? g.data.activityAddition : 0;
+                var dishScore = Math.ceil(+(g.totalScore * (1 + actAdd / 100)).toFixed(2));
+                dishSubtotal += dishScore;
+                dishes.push({
+                    slot: '厨师' + (ci + 1) + '-第' + (reci + 1) + '道',
+                    chef: ruleState[ci].chefId ? _getChefNameById(ruleState[ci].chefId) : '未选择',
+                    equip: _getEquipName(ruleState[ci].equipObj),
+                    recipe: rec.data.name,
+                    qty: rec.quantity,
+                    max: rec.max,
+                    satiety: g.satiety || 0,
+                    dishScore: dishScore
+                });
+            }
+        }
+        return {
+            guest: _getRuleName(ruleIndex),
+            satiety: rule.Satiety || 0,
+            currentSatiety: _calcCurrentSatiety(ruleIndex),
+            dishSubtotal: dishSubtotal,
+            finalRuleScore: _calcRuleScore(ruleIndex, true),
+            dishes: dishes
+        };
+    }
+
     /**
      * 快速获取厨师排名
      * fastMode=true时只计算当前rule的分数（初始化阶段用，快很多）
@@ -1002,6 +1805,7 @@ var BanquetOptimizer = (function() {
         var cookSkillBonus = _analyzeCookSkillIntents(ruleIndex);
         var intentAddInfo = _analyzeIntentAddPositions(ruleIndex);
         var rankPref = _analyzeRankPreference(ruleIndex);
+        var nextDishIntents = _analyzeNextDishIntents(ruleIndex, chefIndex);
         
         // ===== 预计算基准加成（循环外只算一次） =====
         var baseCustomArr = [];
@@ -1119,7 +1923,16 @@ var BanquetOptimizer = (function() {
             }
             
             // 将加成权重转换为等效分数（权重*10作为加分）
-            var estWithBonus = est + bonusWeight * 10;
+            var intentChainAdjust = 0;
+            if (nextDishIntents.length > 0) {
+                var nextDishWeight = _canTriggerNextDishIntent(rd, nextDishIntents);
+                if (recipeIndex < 2) {
+                    intentChainAdjust += nextDishWeight * 220;
+                } else if (nextDishWeight > 0) {
+                    intentChainAdjust -= nextDishWeight * 260;
+                }
+            }
+            var estWithBonus = est + bonusWeight * 10 + intentChainAdjust;
             
             phase1.push({rd: rd, qty: qty, est: est, estWithBonus: estWithBonus, bonusWeight: bonusWeight});
         }
@@ -1292,15 +2105,10 @@ var BanquetOptimizer = (function() {
         var results = [];
         var gName = rule.Title || ('贵客' + (ruleIndex + 1));
         
-        console.log('[多技法分析] 开始分析贵客:', gName, 'ruleIndex:', ruleIndex);
-        
         if (!rule.IntentList || !_gameData || !_gameData.intents) {
-            console.log('[多技法分析] 缺少数据: IntentList=', !!rule.IntentList, '_gameData=', !!_gameData, 'intents=', !!(_gameData && _gameData.intents));
             _threeSkillIntentCache[ruleIndex] = results;
             return results;
         }
-        
-        console.log('[多技法分析] IntentList长度:', rule.IntentList.length, '意图总数:', _gameData.intents.length);
         
         // 技法名称映射
         var skillNameMap = {
@@ -1313,35 +2121,27 @@ var BanquetOptimizer = (function() {
         for (var ci = 0; ci < rule.IntentList.length; ci++) {
             var intentIds = rule.IntentList[ci];
             if (!intentIds) {
-                console.log('[多技法分析] 位置', ci, '无意图ID');
                 continue;
             }
-            
-            console.log('[多技法分析] 位置', ci, '意图ID列表:', intentIds);
             
             for (var ii = 0; ii < intentIds.length; ii++) {
                 for (var jj = 0; jj < _gameData.intents.length; jj++) {
                     if (_gameData.intents[jj].intentId !== intentIds[ii]) continue;
                     var intent = _gameData.intents[jj];
-                    
-                    console.log('[多技法分析] 检查意图:', intent.intentId, 'effectType:', intent.effectType, 'desc:', intent.desc);
-                    
+
                     // 检查是否是CreateBuff类型且desc包含"三道"
                     if (intent.effectType === 'CreateBuff' && intent.desc && intent.desc.indexOf('三道') >= 0) {
-                        console.log('[多技法分析] 发现三道意图:', intent.desc);
                         // 从desc中提取技法名称
                         for (var sk = 0; sk < skillKeys.length; sk++) {
                             var skillKey = skillKeys[sk];
                             var skillName = skillNameMap[skillKey];
                             if (intent.desc.indexOf('三道' + skillName) >= 0) {
-                                console.log('[多技法分析] 匹配技法:', skillName, '(' + skillKey + ')');
                                 // 计算权重：根据buff效果估算
                                 var weight = 1;
                                 if (_gameData.buffs) {
                                     for (var bk = 0; bk < _gameData.buffs.length; bk++) {
                                         if (_gameData.buffs[bk].buffId === intent.effectValue) {
                                             var buff = _gameData.buffs[bk];
-                                            console.log('[多技法分析] 找到buff:', buff.buffId, 'effectType:', buff.effectType, 'effectValue:', buff.effectValue);
                                             // 售价加成权重高
                                             if (buff.effectType === 'PriceChangePercent' || buff.effectType === 'BasicPriceChangePercent') {
                                                 weight = Math.abs(buff.effectValue || 50);
@@ -1371,7 +2171,6 @@ var BanquetOptimizer = (function() {
                                         intentDesc: intent.desc,
                                         weight: weight
                                     });
-                                    console.log('[多技法分析] 添加技法:', skillName, '权重:', weight);
                                 }
                                 break;
                             }
@@ -1384,9 +2183,7 @@ var BanquetOptimizer = (function() {
         
         // 按权重降序排序
         results.sort(function(a, b) { return b.weight - a.weight; });
-        
-        console.log('[多技法分析] 分析结果:', results.length, '个技法意图:', results.map(function(r) { return r.skillName + '(' + r.weight + ')'; }).join(', '));
-        
+
         _threeSkillIntentCache[ruleIndex] = results;
         return results;
     }
@@ -2604,7 +3401,7 @@ var BanquetOptimizer = (function() {
             var _rule = _rules[activeRules[_ri]];
             var _nc = _rule.IntentList ? _rule.IntentList.length : 3;
             // 每个位置: recipeSeedK个种子 × chefPerSeed个厨师
-            totalSubSteps += _nc * CONFIG.recipeSeedK * CONFIG.chefPerSeed;
+            totalSubSteps += _nc * _getRuntimeConfigValue('recipeSeedK') * _getRuntimeConfigValue('chefPerSeed');
             // 协同种子: 最多3对 × numChefs个位置
             totalSubSteps += Math.min(3, 200) * _nc; // 粗估，实际可能更少
         }
@@ -2655,19 +3452,6 @@ var BanquetOptimizer = (function() {
             for (var rnk in rarityRankBonus.rankBonus) {
                 rankList.push((rankNames[rnk] || rnk) + ':' + rarityRankBonus.rankBonus[rnk]);
             }
-            if (condimentList.length > 0 || rarityList.length > 0 || rankList.length > 0) {
-                console.log('[意图分析] 贵客:', gName);
-                if (condimentList.length > 0) {
-                    console.log('[意图分析]   调料加成:', condimentList.join(', '));
-                }
-                if (rarityList.length > 0) {
-                    console.log('[意图分析]   稀有度加成:', rarityList.join(', '));
-                }
-                if (rankList.length > 0) {
-                    console.log('[意图分析]   品阶加成:', rankList.join(', '));
-                }
-            }
-            
             // 输出技法加成意图
             var cookSkillBonus = _analyzeCookSkillIntents(mainRule);
             var skillNameMap = {'stirfry': '炒', 'fry': '炸', 'bake': '烤', 'steam': '蒸', 'boil': '煮', 'knife': '切'};
@@ -2676,44 +3460,15 @@ var BanquetOptimizer = (function() {
                 var skName = skillNameMap[sk] || sk;
                 skillList.push(skName + ':' + cookSkillBonus[sk]);
             }
-            if (skillList.length > 0) {
-                console.log('[意图分析] 贵客:', gName);
-                console.log('[意图分析]   技法加成:', skillList.join(', '));
-            }
             
             // 输出IntentAdd叠加信息
             var intentAddInfo = _analyzeIntentAddPositions(mainRule);
-            if (intentAddInfo.hasIntentAdd) {
-                var addPosList = [];
-                for (var addPos in intentAddInfo.positionWeights) {
-                    addPosList.push('位置' + (Number(addPos)+1) + '(价值' + intentAddInfo.positionWeights[addPos] + ')');
-                }
-                console.log('[意图分析] 贵客:', gName);
-                console.log('[意图分析]   IntentAdd位置:', addPosList.join(', '));
-            }
             
             // 输出售价光环厨师信息
             var priceAuraChefs = _analyzePriceAuraChefs(mainRule);
-            if (priceAuraChefs.length > 0) {
-                var auraList = priceAuraChefs.slice(0, 5).map(function(a) {
-                    var types = a.auraEffects.map(function(e) { return e.type + '(' + e.value + ')'; });
-                    return a.chefName + '[' + types.join(',') + ']分' + a.auraScore;
-                });
-                console.log('[意图分析] 贵客:', gName);
-                console.log('[意图分析]   售价光环厨师:', auraList.join(', '));
-            }
             
             // 输出品阶偏好信息
             var rankPref = _analyzeRankPreference(mainRule);
-            if (rankPref.hasRankPreference) {
-                var rankNames = {2: '优', 3: '特', 4: '神', 5: '传'};
-                var prefList = [];
-                for (var pr in rankPref.preferredRanks) {
-                    prefList.push((rankNames[pr] || pr) + ':' + rankPref.preferredRanks[pr]);
-                }
-                console.log('[意图分析] 贵客:', gName);
-                console.log('[意图分析]   品阶偏好:', prefList.join(', '));
-            }
             
             var phase2Info = [];
             for (var ci = 0; ci < numChefs; ci++) {
@@ -2758,7 +3513,21 @@ var BanquetOptimizer = (function() {
                     }
                 }
                 
-                var topRecipes = _fastGetRecipeRanking(mainRule, seedPos, seedRecipeIdx, CONFIG.recipeSeedK, true);
+                var topRecipes = _fastGetRecipeRanking(mainRule, seedPos, seedRecipeIdx, _getRuntimeConfigValue('recipeSeedK'), true);
+                _debugLog('init-seed', '位置种子菜谱排名', {
+                    guest: gName,
+                    position: seedPos + 1,
+                    seedRecipeIndex: seedRecipeIdx + 1,
+                    fillOrder: fillOrder,
+                    intentInfo: intentStrategy.intentInfo,
+                    topRecipes: topRecipes.map(function(item) {
+                        var rd = _recipeMap[item.recipeId];
+                        return {
+                            recipe: rd ? rd.name : item.recipeId,
+                            score: item.score
+                        };
+                    })
+                });
                 
                 // 种子菜谱循环改为异步，每个种子之间让出线程
                 var rsi = 0;
@@ -2793,8 +3562,21 @@ var BanquetOptimizer = (function() {
                             topChefNames.push(_getChefNameById(chefRanking[tc].chefId) + '(' + chefRanking[tc].score + ')');
                         }
                     }
+                    _debugLog('init-seed', '种子厨师排名', {
+                        guest: gName,
+                        position: seedPos + 1,
+                        seedRecipe: seedRecipeName,
+                        topChefs: chefRanking.slice(0, 10).map(function(item) {
+                            return {
+                                chef: _getChefNameById(item.chefId),
+                                score: item.score,
+                                used: !!item.used,
+                                skillOk: item.skillOk !== false
+                            };
+                        })
+                    });
                     var chefsTried = 0;
-                    for (var j = 0; j < chefRanking.length && chefsTried < CONFIG.chefPerSeed; j++) {
+                    for (var j = 0; j < chefRanking.length && chefsTried < _getRuntimeConfigValue('chefPerSeed'); j++) {
                         if (chefRanking[j].used || chefRanking[j].skillOk === false) continue;
                         chefsTried++;
                         
@@ -2834,6 +3616,10 @@ var BanquetOptimizer = (function() {
                             score: score,
                             label: gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName
                         });
+                        _logStateSnapshot('candidate', '生成初始化候选', _simState, score, {
+                            label: gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName,
+                            stage: 'seed'
+                        });
                         
                         // 候选生成后检查：分数达标且饱食度达标时提前结束
                         if (_targetScore && score >= _targetScore && _isAllSatietyOk()) {
@@ -2846,7 +3632,7 @@ var BanquetOptimizer = (function() {
                     
                     rsi++;
                     // 每个种子菜谱完成后确保进度增加（即使没有厨师被尝试）
-                    completedSubSteps = Math.max(completedSubSteps, rsi * CONFIG.chefPerSeed);
+                    completedSubSteps = Math.max(completedSubSteps, rsi * _getRuntimeConfigValue('chefPerSeed'));
                     // 每个种子菜谱之间让出线程，更新UI进度
                     _updateInitProgress(_getBestCandidateScore());
                     setTimeout(_processNextSeedRecipe, 0);
@@ -2921,6 +3707,10 @@ var BanquetOptimizer = (function() {
                                 score: synScore,
                                 label: gName + '协同pos' + (synSeedPos+1) + ' ' + sp.chefName + '+' + sp.recipeName + '(syn:' + sp.synergyScore.toFixed(0) + ')'
                             });
+                            _logStateSnapshot('candidate', '生成协同候选', _simState, synScore, {
+                                label: gName + '协同pos' + (synSeedPos+1) + ' ' + sp.chefName + '+' + sp.recipeName,
+                                stage: 'synergy'
+                            });
                             
                             // 协同种子检查：分数达标且饱食度达标时提前结束
                             if (_targetScore && synScore >= _targetScore && _isAllSatietyOk()) {
@@ -2947,8 +3737,6 @@ var BanquetOptimizer = (function() {
                     _processMultiSkillSeeds();
                     return;
                 }
-                
-                console.log('[光环种子] 开始处理贵客:', gName, '售价光环厨师数:', auraChefs.length);
                 
                 // 最多尝试top3光环厨师
                 var maxAuraSeeds = Math.min(3, auraChefs.length);
@@ -2995,11 +3783,14 @@ var BanquetOptimizer = (function() {
                         _quickRefineFast(activeRules, true);
                         
                         var auraScore = _fastCalcScore();
-                        console.log('[光环种子] 生成候选:', auraChef.chefName, 'pos' + (auraPos+1), '分数:', auraScore);
                         candidates.push({
                             state: _cloneSimState(_simState),
                             score: auraScore,
                             label: gName + '光环(' + auraChef.chefName + ')pos' + (auraPos+1)
+                        });
+                        _logStateSnapshot('candidate', '生成光环候选', _simState, auraScore, {
+                            label: gName + '光环(' + auraChef.chefName + ')pos' + (auraPos+1),
+                            stage: 'aura'
                         });
                         
                         if (_targetScore && auraScore >= _targetScore && _isAllSatietyOk()) {
@@ -3019,14 +3810,10 @@ var BanquetOptimizer = (function() {
             
             // ==================== 多技法组合种子生成 ====================
             function _processMultiSkillSeeds() {
-                console.log('[多技法种子] 开始处理贵客:', gName);
                 var threeSkillIntents = _analyzeThreeSkillIntents(mainRule);
-                
-                console.log('[多技法种子] 三道技法意图数量:', threeSkillIntents.length);
-                
+
                 // 只有当存在2个以上"三道某技法"意图时才生成多技法组合种子
                 if (threeSkillIntents.length < 2) {
-                    console.log('[多技法种子] 技法意图不足2个，跳过');
                     // 没有多技法意图，直接进入下一个贵客
                     mainIdx++;
                     setTimeout(_processNextRule, 0);
@@ -3034,7 +3821,6 @@ var BanquetOptimizer = (function() {
                 }
                 
                 var skillCombinations = _generateMultiSkillCombinations(threeSkillIntents);
-                console.log('[多技法种子] 生成组合数:', skillCombinations.length);
                 
                 // 只处理双技法和三技法组合（单技法已在普通种子中覆盖）
                 var multiSkillCombos = [];
@@ -3054,10 +3840,7 @@ var BanquetOptimizer = (function() {
                     return b.totalWeight - a.totalWeight;
                 });
                 
-                console.log('[多技法种子] 多技法组合数:', multiSkillCombos.length, multiSkillCombos.map(function(c) { return c.skillNames.join('+'); }));
-                
                 if (multiSkillCombos.length === 0) {
-                    console.log('[多技法种子] 无多技法组合，跳过');
                     mainIdx++;
                     setTimeout(_processNextRule, 0);
                     return;
@@ -3071,7 +3854,6 @@ var BanquetOptimizer = (function() {
                 function _processNextCombo() {
                     if (comboIdx >= multiSkillCombos.length) {
                         // 所有组合处理完成，进入下一个贵客
-                        console.log('[多技法种子] 所有组合处理完成');
                         mainIdx++;
                         setTimeout(_processNextRule, 0);
                         return;
@@ -3080,47 +3862,11 @@ var BanquetOptimizer = (function() {
                     var combo = multiSkillCombos[comboIdx];
                     var comboSkillNames = combo.skillNames.join('+');
                     
-                    console.log('[多技法种子] 处理组合:', comboSkillNames, '技法:', combo.skills);
-                    
                     // 筛选同时具有这些技法的菜谱（会考虑调料/稀有度/品阶加成）
                     var multiSkillRecipes = _filterRecipesByMultiSkills(mainRule, combo.skills);
                     
-                    // 显示识别到的加成意图
-                    if (comboIdx === 0) {
-                        var condimentBonus = _analyzeCondimentIntents(mainRule);
-                        var rarityRankBonus = _analyzeRarityRankIntents(mainRule);
-                        var condimentList = [];
-                        for (var cond in condimentBonus) {
-                            condimentList.push(cond + ':' + condimentBonus[cond]);
-                        }
-                        var rarityList = [];
-                        for (var rar in rarityRankBonus.rarityBonus) {
-                            rarityList.push(rar + '火:' + rarityRankBonus.rarityBonus[rar]);
-                        }
-                        var rankList = [];
-                        var rankNames = {2: '优', 3: '特', 4: '神', 5: '传'};
-                        for (var rnk in rarityRankBonus.rankBonus) {
-                            rankList.push((rankNames[rnk] || rnk) + ':' + rarityRankBonus.rankBonus[rnk]);
-                        }
-                        if (condimentList.length > 0) {
-                            console.log('[多技法种子] 调料加成意图:', condimentList.join(', '));
-                        }
-                        if (rarityList.length > 0) {
-                            console.log('[多技法种子] 稀有度加成意图:', rarityList.join(', '));
-                        }
-                        if (rankList.length > 0) {
-                            console.log('[多技法种子] 品阶加成意图:', rankList.join(', '));
-                        }
-                    }
-                    
-                    console.log('[多技法种子] 满足条件的菜谱数:', multiSkillRecipes.length);
-                    if (multiSkillRecipes.length > 0) {
-                        console.log('[多技法种子] 前5道菜谱:', multiSkillRecipes.slice(0, 5).map(function(r) { return r.name; }));
-                    }
-                    
                     if (multiSkillRecipes.length < 3) {
                         // 满足条件的菜谱不足3道，跳过此组合
-                        console.log('[多技法种子] 菜谱不足3道，跳过此组合');
                         comboIdx++;
                         setTimeout(_processNextCombo, 0);
                         return;
@@ -3169,22 +3915,15 @@ var BanquetOptimizer = (function() {
                                 bestChefId = chef.chefId;
                                 bestRecipeSet = canMakeRecipes.slice(0, 3);
                                 msChefSet = true;
-                                console.log('[多技法种子] 找到厨师:', chef.name, '能做菜谱:', bestRecipeSet.map(function(r) { return r.name; }));
                             }
                         }
                         
                         if (!msChefSet) {
-                            console.log('[多技法种子] pos' + (msPos+1) + ' 没有厨师能做3道多技法菜谱，跳过');
                             continue;
                         }
                         
                         // 分析"下道料理"和"下阶段"意图，用于优化菜谱位置分配
                         var nextDishIntents = _analyzeNextDishIntents(mainRule, msPos);
-                        if (nextDishIntents.length > 0) {
-                            console.log('[多技法种子] 检测到下道/下阶段意图:', nextDishIntents.map(function(n) { 
-                                return n.desc + '(' + n.intentType + ',权重' + n.weight.toFixed(0) + ')'; 
-                            }));
-                        }
                         
                         // 设置找到的厨师和菜谱
                         _simSetChef(mainRule, msPos, bestChefId);
@@ -3210,9 +3949,6 @@ var BanquetOptimizer = (function() {
                                 var assignRecipe = recipeWithWeight[reci].recipe;
                                 _simSetRecipe(mainRule, msPos, reci, assignRecipe.recipeId);
                                 usedRecipeIds[assignRecipe.recipeId] = true;
-                                if (recipeWithWeight[reci].triggerWeight > 0) {
-                                    console.log('[多技法种子] 位置', reci, '放置', assignRecipe.name, '(下道料理权重:', recipeWithWeight[reci].triggerWeight, ')');
-                                }
                             }
                         } else {
                             // 没有下道料理意图，按原顺序分配
@@ -3300,11 +4036,14 @@ var BanquetOptimizer = (function() {
                         _quickRefineFast(activeRules, true);
                         
                         var msScore = _fastCalcScore();
-                        console.log('[多技法种子] 生成候选:', comboSkillNames, 'pos' + (msPos+1), '分数:', msScore);
                         candidates.push({
                             state: _cloneSimState(_simState),
                             score: msScore,
                             label: gName + '多技法(' + comboSkillNames + ')pos' + (msPos+1)
+                        });
+                        _logStateSnapshot('candidate', '生成多技法候选', _simState, msScore, {
+                            label: gName + '多技法(' + comboSkillNames + ')pos' + (msPos+1),
+                            stage: 'multi-skill'
                         });
                         
                         // 检查是否达标
@@ -3339,15 +4078,34 @@ var BanquetOptimizer = (function() {
      */
     function _finishInitialization(candidates, activeRules, onDone) {
         candidates.sort(function(a, b) { return b.score - a.score; });
+        _debugLog('init-summary', '初始化候选排序完成', {
+            count: candidates.length,
+            topCandidates: candidates.slice(0, 10).map(function(candidate, index) {
+                var snapshot = _buildSnapshotPayload(candidate.state, candidate.score);
+                return {
+                    rank: index + 1,
+                    label: candidate.label,
+                    score: candidate.score,
+                    satiety: snapshot.satiety,
+                    state: snapshot.state
+                };
+            })
+        });
         
         for (var t = 0; t < Math.min(5, candidates.length); t++) {
         }
         
         if (candidates.length > 0) {
             _topCandidates = [];
-            var numTop = Math.min(5, candidates.length);
+            _topCandidateMeta = [];
+            var numTop = Math.min(_getRuntimeConfigValue('initKeepTop'), candidates.length);
             for (var t = 0; t < numTop; t++) {
                 _topCandidates.push(_cloneSimState(candidates[t].state));
+                _topCandidateMeta.push({
+                    label: candidates[t].label,
+                    initScore: candidates[t].score,
+                    score: candidates[t].score
+                });
             }
             
             // 候选分数达标时的处理
@@ -3388,14 +4146,18 @@ var BanquetOptimizer = (function() {
             
             function _continueRefineProcess() {
             
-            _simState = candidates[0].state;
-            var activeRulesForRefine = [];
-            for (var ri = 0; ri < _rules.length; ri++) {
-                if (_shouldProcessRule(ri)) activeRulesForRefine.push(ri);
-            }
-            _quickRefineFast(activeRulesForRefine, false);
-            var refinedScore = _fastCalcScore();
-            _topCandidates[0] = _cloneSimState(_simState);
+                _simState = candidates[0].state;
+                var activeRulesForRefine = [];
+                for (var ri = 0; ri < _rules.length; ri++) {
+                    if (_shouldProcessRule(ri)) activeRulesForRefine.push(ri);
+                }
+                _quickRefineFast(activeRulesForRefine, false);
+                var refinedScore = _fastCalcScore();
+                _topCandidates[0] = _cloneSimState(_simState);
+                if (_topCandidateMeta[0]) _topCandidateMeta[0].score = refinedScore;
+                _logStateSnapshot('init-summary', '首个候选精调后', _simState, refinedScore, {
+                    label: _topCandidateMeta[0] ? _topCandidateMeta[0].label : 'top1'
+                });
             
             // 精调后检查：分数达标时的处理
             if (_targetScore && refinedScore >= _targetScore) {
@@ -3438,16 +4200,27 @@ var BanquetOptimizer = (function() {
             for (var mi = 0; mi < _menusByRule.length; mi++) totalMenusInit += _menusByRule[mi].length;
             var seedRefineMode = totalMenusInit > 800 ? true : false;
             
-            for (var t = 1; t < _topCandidates.length; t++) {
-                _simState = _topCandidates[t];
-                _quickRefineFast(activeRulesForRefine, seedRefineMode);
-                var tScore = _fastCalcScore();
-                _topCandidates[t] = _cloneSimState(_simState);
-                if (tScore > refinedScore) {
-                    _topCandidates[0] = _topCandidates[t];
-                    refinedScore = tScore;
+                for (var t = 1; t < _topCandidates.length; t++) {
+                    _simState = _topCandidates[t];
+                    var currentSeedRefineMode = seedRefineMode;
+                    if (_isSingleGuestMode() && currentSeedRefineMode === false && t >= 4) {
+                        currentSeedRefineMode = true;
+                    }
+                    _quickRefineFast(activeRulesForRefine, currentSeedRefineMode);
+                    var tScore = _fastCalcScore();
+                    _topCandidates[t] = _cloneSimState(_simState);
+                    if (_topCandidateMeta[t]) _topCandidateMeta[t].score = tScore;
+                    _logStateSnapshot('init-summary', '其他候选精调后', _simState, tScore, {
+                        label: _topCandidateMeta[t] ? _topCandidateMeta[t].label : ('top' + (t + 1))
+                    });
+                    if (tScore > refinedScore) {
+                        _topCandidates[0] = _topCandidates[t];
+                        if (_topCandidateMeta[t]) {
+                            _topCandidateMeta[0] = _topCandidateMeta[t];
+                        }
+                        refinedScore = tScore;
+                    }
                 }
-            }
             
             _simState = _cloneSimState(_topCandidates[0]);
         
@@ -3475,7 +4248,7 @@ var BanquetOptimizer = (function() {
             maxIter = lightMode;
             skipChef = false;
         } else {
-            maxIter = CONFIG.refineIter;
+            maxIter = _getRuntimeConfigValue('refineIter');
             skipChef = false;
         }
         for (var iter = 0; iter < maxIter; iter++) {
@@ -3851,20 +4624,16 @@ var BanquetOptimizer = (function() {
                 var p1 = positions[i], p2 = positions[j];
                 var id1 = _simState[p1.ri][p1.ci].chefId;
                 var id2 = _simState[p2.ri][p2.ci].chefId;
+                var savedSlot1 = _cloneSlotState(_simState[p1.ri][p1.ci]);
+                var savedSlot2 = _cloneSlotState(_simState[p2.ri][p2.ci]);
                 
                 if (id1 === id2) continue;
                 
                 // 交换
                 _simSetChef(p1.ri, p1.ci, id2);
                 _simSetChef(p2.ri, p2.ci, id1);
-                
-                // 交换后需要重新计算菜谱份数
-                for (var reci = 0; reci < 3; reci++) {
-                    var r1 = _simState[p1.ri][p1.ci].recipes[reci];
-                    if (r1.data) _simSetRecipe(p1.ri, p1.ci, reci, r1.data.recipeId);
-                    var r2 = _simState[p2.ri][p2.ci].recipes[reci];
-                    if (r2.data) _simSetRecipe(p2.ri, p2.ci, reci, r2.data.recipeId);
-                }
+                _refillRecipesForCurrentChef(p1.ri, p1.ci);
+                _refillRecipesForCurrentChef(p2.ri, p2.ci);
                 
                 var newScore = _fastCalcScore();
                 
@@ -3874,14 +4643,8 @@ var BanquetOptimizer = (function() {
                     improved = true;
                 } else {
                     // 换回来
-                    _simSetChef(p1.ri, p1.ci, id1);
-                    _simSetChef(p2.ri, p2.ci, id2);
-                    for (var reci = 0; reci < 3; reci++) {
-                        var r1 = _simState[p1.ri][p1.ci].recipes[reci];
-                        if (r1.data) _simSetRecipe(p1.ri, p1.ci, reci, r1.data.recipeId);
-                        var r2 = _simState[p2.ri][p2.ci].recipes[reci];
-                        if (r2.data) _simSetRecipe(p2.ri, p2.ci, reci, r2.data.recipeId);
-                    }
+                    _restoreSlotState(p1.ri, p1.ci, savedSlot1);
+                    _restoreSlotState(p2.ri, p2.ci, savedSlot2);
                 }
             }
         }
@@ -3902,32 +4665,33 @@ var BanquetOptimizer = (function() {
                 
                 var currentChefId = _simState[ruleIndex][chefIndex].chefId;
                 var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
+                var savedSlot = _cloneSlotState(_simState[ruleIndex][chefIndex]);
+                var candidateChefIds = _getChefSearchCandidates(ruleIndex, chefIndex, _getRuntimeConfigValue('chefClimbTry'));
+                var bestLocalScore = _bestScore;
+                var bestLocalState = null;
                 
-                // 排名函数内部已经计算了每个厨师的分数（fastMode加速）
-                var chefRanking = _fastGetChefRanking(ruleIndex, chefIndex, true);
-                
-                // 遍历top候选厨师，用全局分数验证（不再只看第一个）
-                var triedCount = 0;
-                var maxTry = 3; // 最多尝试3个厨师
-                for (var i = 0; i < chefRanking.length && triedCount < maxTry; i++) {
-                    var cr = chefRanking[i];
-                    if (cr.used || usedChefIds[cr.chefId]) continue;
-                    if (cr.chefId === currentChefId) continue;
-                    if (cr.skillOk === false) continue;
-                    triedCount++;
-                    
-                    _simSetChef(ruleIndex, chefIndex, cr.chefId);
+                for (var i = 0; i < candidateChefIds.length; i++) {
+                    var candidateChefId = candidateChefIds[i];
+                    if (usedChefIds[candidateChefId]) continue;
+                    if (candidateChefId === currentChefId) continue;
+
+                    _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+                    _simSetChef(ruleIndex, chefIndex, candidateChefId);
+                    _refillRecipesForCurrentChef(ruleIndex, chefIndex);
+
                     var newTotal = _fastCalcScore();
-                    if (newTotal > _bestScore) {
-                        _bestScore = newTotal;
-                        _bestSimState = _cloneSimState(_simState);
-                        improved = true;
-                        currentChefId = cr.chefId; // 更新当前厨师
-                        break; // 找到改进就停
-                    } else {
-                        // 回退
-                        _simSetChef(ruleIndex, chefIndex, currentChefId);
+                    if (newTotal > bestLocalScore) {
+                        bestLocalScore = newTotal;
+                        bestLocalState = _cloneSimState(_simState);
                     }
+                }
+
+                _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+                if (bestLocalState) {
+                    _simState = bestLocalState;
+                    _bestScore = bestLocalScore;
+                    _bestSimState = _cloneSimState(_simState);
+                    improved = true;
                 }
             }
         }
@@ -3950,29 +4714,28 @@ var BanquetOptimizer = (function() {
                     var currentRecipeId = _simState[ruleIndex][chefIndex].recipes[recipeIndex].data 
                         ? _simState[ruleIndex][chefIndex].recipes[recipeIndex].data.recipeId : null;
                     
-                    // 用全局分数作为基准（而非单贵客分数，避免跨贵客效果导致误判）
-                    var currentTotalScore = _bestScore;
-                    
-                    // 扩大搜索宽度：取top7候选
-                    var recipeRanking = _fastGetRecipeRanking(ruleIndex, chefIndex, recipeIndex, 7, true);
-                    
-                    // 遍历所有候选，用全局分数验证（不再只看第一个）
+                    // 扩大搜索宽度，评估一批候选后选择局部最优，不再命中第一个提升就停
+                    var recipeRanking = _fastGetRecipeRanking(ruleIndex, chefIndex, recipeIndex, _getRuntimeConfigValue('recipeClimbTry'), true);
                     var savedRecipe = _simState[ruleIndex][chefIndex].recipes[recipeIndex];
+                    var bestLocalScore = _bestScore;
+                    var bestLocalState = null;
                     for (var c = 0; c < recipeRanking.length; c++) {
                         if (recipeRanking[c].recipeId === currentRecipeId) continue;
                         
                         _simSetRecipe(ruleIndex, chefIndex, recipeIndex, recipeRanking[c].recipeId);
                         var newTotal = _fastCalcScore();
-                        if (newTotal > _bestScore) {
-                            _bestScore = newTotal;
-                            _bestSimState = _cloneSimState(_simState);
-                            improved = true;
-                            currentRecipeId = recipeRanking[c].recipeId; // 更新当前菜谱
-                            break; // 找到改进就停
-                        } else {
-                            // 回退
-                            _simState[ruleIndex][chefIndex].recipes[recipeIndex] = savedRecipe;
+                        if (newTotal > bestLocalScore) {
+                            bestLocalScore = newTotal;
+                            bestLocalState = _cloneSimState(_simState);
                         }
+                        _simState[ruleIndex][chefIndex].recipes[recipeIndex] = savedRecipe;
+                    }
+
+                    if (bestLocalState) {
+                        _simState = bestLocalState;
+                        _bestScore = bestLocalScore;
+                        _bestSimState = _cloneSimState(_simState);
+                        improved = true;
                     }
                 }
             }
@@ -4063,6 +4826,7 @@ var BanquetOptimizer = (function() {
      * 单独换厨师或单独换菜谱都找不到这种组合
      */
     function _climbJointChefRecipe() {
+        if (_isSingleGuestMode()) return false;
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
@@ -4076,55 +4840,327 @@ var BanquetOptimizer = (function() {
                 var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
                 
                 // 保存当前位置完整状态
-                var savedSlot = {
-                    chefId: _simState[ruleIndex][chefIndex].chefId,
-                    chefObj: _simState[ruleIndex][chefIndex].chefObj,
-                    equipObj: _simState[ruleIndex][chefIndex].equipObj,
-                    recipes: [
-                        _simState[ruleIndex][chefIndex].recipes[0],
-                        _simState[ruleIndex][chefIndex].recipes[1],
-                        _simState[ruleIndex][chefIndex].recipes[2]
-                    ]
-                };
-                
-                var chefRanking = _fastGetChefRanking(ruleIndex, chefIndex, true);
-                var triedCount = 0;
-                
-                for (var ci = 0; ci < chefRanking.length && triedCount < 3; ci++) {
-                    var cr = chefRanking[ci];
-                    if (cr.used || usedChefIds[cr.chefId]) continue;
-                    if (cr.chefId === currentChefId) continue;
-                    if (cr.skillOk === false) continue;
-                    triedCount++;
-                    
-                    // 换厨师
-                    _simSetChef(ruleIndex, chefIndex, cr.chefId);
-                    
-                    // 重新选所有3道菜谱
-                    for (var reci = 0; reci < 3; reci++) {
-                        var rk = _fastGetRecipeRanking(ruleIndex, chefIndex, reci, 1, true);
-                        if (rk.length > 0) {
-                            _simSetRecipe(ruleIndex, chefIndex, reci, rk[0].recipeId);
-                        }
-                    }
-                    
+                var savedSlot = _cloneSlotState(_simState[ruleIndex][chefIndex]);
+                var candidateChefIds = _getChefSearchCandidates(ruleIndex, chefIndex, _getRuntimeConfigValue('jointChefTry'));
+                var bestLocalScore = _bestScore;
+                var bestLocalState = null;
+
+                for (var ci = 0; ci < candidateChefIds.length; ci++) {
+                    var candidateChefId = candidateChefIds[ci];
+                    if (usedChefIds[candidateChefId]) continue;
+                    if (candidateChefId === currentChefId) continue;
+
+                    _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+                    _simSetChef(ruleIndex, chefIndex, candidateChefId);
+                    _refillRecipesForCurrentChef(ruleIndex, chefIndex);
+
                     var newTotal = _fastCalcScore();
-                    if (newTotal > _bestScore) {
-                        _bestScore = newTotal;
-                        _bestSimState = _cloneSimState(_simState);
-                        improved = true;
-                        break; // 找到改进就停
-                    } else {
-                        // 回退整个位置
-                        _simState[ruleIndex][chefIndex].chefId = savedSlot.chefId;
-                        _simState[ruleIndex][chefIndex].chefObj = savedSlot.chefObj;
-                        _simState[ruleIndex][chefIndex].equipObj = savedSlot.equipObj;
-                        _simState[ruleIndex][chefIndex].recipes = savedSlot.recipes;
+                    if (newTotal > bestLocalScore) {
+                        bestLocalScore = newTotal;
+                        bestLocalState = _cloneSimState(_simState);
                     }
+                }
+
+                _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+                if (bestLocalState) {
+                    _simState = bestLocalState;
+                    _bestScore = bestLocalScore;
+                    _bestSimState = _cloneSimState(_simState);
+                    improved = true;
                 }
             }
         }
         
+        return improved;
+    }
+
+    function _buildFixedChefSlotCandidates(ruleIndex, chefIndex) {
+        var savedGlobalState = _cloneSimState(_simState);
+        var strategy = _analyzeIntents(ruleIndex, chefIndex);
+        var candidateStates = [];
+        var seen = {};
+        var seedIndexes = [];
+
+        function addSeedIndex(seedIndex) {
+            if (seedIndex === undefined || seedIndex === null) return;
+            for (var i = 0; i < seedIndexes.length; i++) {
+                if (seedIndexes[i] === seedIndex) return;
+            }
+            seedIndexes.push(seedIndex);
+        }
+
+        function captureCandidate(label) {
+            var slotClone = _cloneSlotState(_simState[ruleIndex][chefIndex]);
+            var sig = _getSlotRecipeSignature(slotClone);
+            if (!sig || seen[sig]) return;
+            seen[sig] = true;
+            var score = _fastCalcScore();
+            var intentScore = _calcRuleIntentHeuristic(ruleIndex);
+            candidateStates.push({
+                slot: slotClone,
+                score: score,
+                intentScore: intentScore,
+                rankScore: score + intentScore * CONFIG.slotIntentHeuristicWeight,
+                label: label
+            });
+        }
+
+        captureCandidate('current');
+        addSeedIndex(strategy.seedRecipeIndex);
+        for (var fo = 0; fo < strategy.fillOrder.length; fo++) {
+            addSeedIndex(strategy.fillOrder[fo]);
+        }
+
+        for (var si = 0; si < seedIndexes.length; si++) {
+            var seedRecipeIdx = seedIndexes[si];
+            _simState = _cloneSimState(savedGlobalState);
+            _clearSlotRecipes(ruleIndex, chefIndex);
+
+            if (strategy.prePlaceList.length > 0) {
+                for (var pp = 0; pp < strategy.prePlaceList.length; pp++) {
+                    var prePlace = strategy.prePlaceList[pp];
+                    var prePlaceRecipeId = _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
+                    if (prePlaceRecipeId) {
+                        _simSetRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlaceRecipeId);
+                    }
+                }
+            }
+
+            var topRecipes = _fastGetRecipeRanking(ruleIndex, chefIndex, seedRecipeIdx, _getRuntimeConfigValue('fixedChefRecipeSeedTop'), true);
+            for (var ri = 0; ri < topRecipes.length; ri++) {
+                _simState = _cloneSimState(savedGlobalState);
+                _clearSlotRecipes(ruleIndex, chefIndex);
+
+                if (strategy.prePlaceList.length > 0) {
+                    for (var pp2 = 0; pp2 < strategy.prePlaceList.length; pp2++) {
+                        var prePlace2 = strategy.prePlaceList[pp2];
+                        var prePlaceRecipeId2 = _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace2.recipeIndex, prePlace2.filterFn);
+                        if (prePlaceRecipeId2) {
+                            _simSetRecipe(ruleIndex, chefIndex, prePlace2.recipeIndex, prePlaceRecipeId2);
+                        }
+                    }
+                }
+
+                _simSetRecipe(ruleIndex, chefIndex, seedRecipeIdx, topRecipes[ri].recipeId);
+                _greedyFillRecipesOrdered(ruleIndex, chefIndex, strategy.fillOrder, seedRecipeIdx);
+                captureCandidate('seed-' + (seedRecipeIdx + 1));
+            }
+        }
+
+        candidateStates.sort(function(a, b) {
+            if (b.rankScore !== a.rankScore) return b.rankScore - a.rankScore;
+            return b.score - a.score;
+        });
+        if (candidateStates.length > _getRuntimeConfigValue('fixedChefRecipeSlotKeepTop')) {
+            candidateStates.length = _getRuntimeConfigValue('fixedChefRecipeSlotKeepTop');
+        }
+
+        _simState = savedGlobalState;
+        return candidateStates;
+    }
+
+    function _rebuildCurrentChefLayout(ruleIndex, rebuildMeta) {
+        var rule = _rules[ruleIndex];
+        var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+        var savedBestScore = _bestScore;
+        var savedBestState = _cloneSimState(_bestSimState);
+        var savedWorkingState = _cloneSimState(_simState);
+        var slotCandidates = [];
+        var hasAllChefs = true;
+
+        for (var ci = 0; ci < numChefs; ci++) {
+            if (!_simState[ruleIndex][ci].chefId) {
+                hasAllChefs = false;
+                break;
+            }
+            slotCandidates.push(_buildFixedChefSlotCandidates(ruleIndex, ci));
+        }
+        if (!hasAllChefs) {
+            _simState = savedWorkingState;
+            return false;
+        }
+
+        var bestComboScore = -1;
+        var bestComboIntent = -Infinity;
+        var bestComboRank = -Infinity;
+        var bestComboState = null;
+
+        var baseUsedRecipeIds = {};
+        for (var ri2 = 0; ri2 < savedWorkingState.length; ri2++) {
+            if (ri2 === ruleIndex || !_shouldProcessRule(ri2)) continue;
+            for (var ci2 = 0; ci2 < savedWorkingState[ri2].length; ci2++) {
+                for (var reci2 = 0; reci2 < 3; reci2++) {
+                    var usedRec = savedWorkingState[ri2][ci2].recipes[reci2];
+                    if (usedRec && usedRec.data && usedRec.data.recipeId) {
+                        baseUsedRecipeIds[usedRec.data.recipeId] = true;
+                    }
+                }
+            }
+        }
+
+        function dfs(pos, usedRecipeIds) {
+            if (pos >= numChefs) {
+                var total = _fastCalcScore();
+                var intentScore = _calcRuleIntentHeuristic(ruleIndex);
+                var rankScore = total + intentScore * CONFIG.slotIntentHeuristicWeight;
+                if (rankScore > bestComboRank || (rankScore === bestComboRank && total > bestComboScore) || !bestComboState) {
+                    bestComboRank = rankScore;
+                    bestComboScore = total;
+                    bestComboIntent = intentScore;
+                    bestComboState = _cloneSimState(_simState);
+                }
+                return;
+            }
+            for (var i = 0; i < slotCandidates[pos].length; i++) {
+                var candidateSlot = slotCandidates[pos][i].slot;
+                if (!_canUseSlotWithoutDuplicate(usedRecipeIds, candidateSlot)) continue;
+                _restoreSlotState(ruleIndex, pos, candidateSlot);
+                var slotRecipeIds = _getSlotRecipeIds(candidateSlot);
+                for (var sri = 0; sri < slotRecipeIds.length; sri++) {
+                    usedRecipeIds[slotRecipeIds[sri]] = true;
+                }
+                dfs(pos + 1, usedRecipeIds);
+                for (var sri2 = 0; sri2 < slotRecipeIds.length; sri2++) {
+                    delete usedRecipeIds[slotRecipeIds[sri2]];
+                }
+            }
+        }
+
+        _simState = _cloneSimState(savedWorkingState);
+        dfs(0, baseUsedRecipeIds);
+
+        if (bestComboState) {
+            _simState = bestComboState;
+            _bestScore = bestComboScore;
+            _bestSimState = _cloneSimState(_simState);
+
+            _climbRecipes();
+            _simState = _cloneSimState(_bestSimState);
+            _climbRecipeSwap();
+
+            if (_bestScore > savedBestScore) {
+                if (rebuildMeta && rebuildMeta.tag) {
+                    _logStateSnapshot(rebuildMeta.tag, rebuildMeta.message || '固定厨师重建后提升', _bestSimState, _bestScore, {
+                        guest: _getRuleName(ruleIndex),
+                        before: savedBestScore,
+                        comboScore: bestComboScore,
+                        comboIntentScore: bestComboIntent,
+                        after: _bestScore,
+                        permutation: rebuildMeta.permutation || null
+                    });
+                }
+                return true;
+            }
+        }
+
+        _bestScore = savedBestScore;
+        _bestSimState = savedBestState;
+        _simState = _cloneSimState(savedWorkingState);
+        return false;
+    }
+
+    function _climbFixedChefRecipeRebuild() {
+        var improved = false;
+
+        for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
+            if (!_shouldProcessRule(ruleIndex)) continue;
+            if (_rebuildCurrentChefLayout(ruleIndex)) {
+                improved = true;
+            }
+        }
+
+        _simState = _cloneSimState(_bestSimState);
+        return improved;
+    }
+
+    function _climbChefPermutationRebuild() {
+        if (_activeClimbRound > 0) {
+            _simState = _cloneSimState(_bestSimState);
+            return false;
+        }
+        var improved = false;
+
+        for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
+            if (!_shouldProcessRule(ruleIndex)) continue;
+
+            var rule = _rules[ruleIndex];
+            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+            var hasAllChefs = true;
+            for (var ci = 0; ci < numChefs; ci++) {
+                if (!_bestSimState[ruleIndex][ci].chefId) {
+                    hasAllChefs = false;
+                    break;
+                }
+            }
+            if (!hasAllChefs) continue;
+
+            var permutations = _buildIndexPermutations(numChefs);
+            var chefIds = [];
+            for (var src = 0; src < numChefs; src++) {
+                chefIds.push(_bestSimState[ruleIndex][src].chefId);
+            }
+            var permutationCandidates = [];
+            for (var pi = 0; pi < permutations.length; pi++) {
+                var permutation = permutations[pi];
+                var isIdentity = true;
+                for (var ii = 0; ii < permutation.length; ii++) {
+                    if (permutation[ii] !== ii) {
+                        isIdentity = false;
+                        break;
+                    }
+                }
+                if (isIdentity) continue;
+
+                _simState = _cloneSimState(_bestSimState);
+                for (var dst = 0; dst < numChefs; dst++) {
+                    _simSetChef(ruleIndex, dst, chefIds[permutation[dst]]);
+                    _clearSlotRecipes(ruleIndex, dst);
+                }
+                for (var refill = 0; refill < numChefs; refill++) {
+                    _refillRecipesForCurrentChef(ruleIndex, refill);
+                }
+
+                permutationCandidates.push({
+                    permutation: permutation.slice(0),
+                    rankScore: _fastCalcScore() + _calcRuleIntentHeuristic(ruleIndex) * CONFIG.slotIntentHeuristicWeight
+                });
+            }
+
+            permutationCandidates.sort(function(a, b) {
+                return b.rankScore - a.rankScore;
+            });
+            if (permutationCandidates.length > _getRuntimeConfigValue('chefPermutationTry')) {
+                permutationCandidates.length = _getRuntimeConfigValue('chefPermutationTry');
+            }
+
+            for (var pci = 0; pci < permutationCandidates.length; pci++) {
+                var candidate = permutationCandidates[pci];
+                var permutation = candidate.permutation;
+                _simState = _cloneSimState(_bestSimState);
+                for (var dst2 = 0; dst2 < numChefs; dst2++) {
+                    _simSetChef(ruleIndex, dst2, chefIds[permutation[dst2]]);
+                    _clearSlotRecipes(ruleIndex, dst2);
+                }
+                for (var refill2 = 0; refill2 < numChefs; refill2++) {
+                    _refillRecipesForCurrentChef(ruleIndex, refill2);
+                }
+                if (_rebuildCurrentChefLayout(ruleIndex, {
+                    tag: 'chef-permute',
+                    message: '厨师位置重排后提升',
+                    permutation: permutation.map(function(fromIndex, toIndex) {
+                        return {
+                            to: toIndex + 1,
+                            from: fromIndex + 1,
+                            chef: _getChefNameById(chefIds[fromIndex])
+                        };
+                    })
+                })) {
+                    improved = true;
+                }
+            }
+        }
+
+        _simState = _cloneSimState(_bestSimState);
         return improved;
     }
 
@@ -4152,10 +5188,9 @@ var BanquetOptimizer = (function() {
             if (!_isRunning) { _stopProgressTimer(); return; }
             
             var elapsed = Date.now() - _progressStartTime;
-            // 基于时间的最低进度：用对数曲线，前期快后期慢，最高到95%
-            // timePct = 95 * (1 - e^(-elapsed/estTotal*3))
+            // 基于时间的最低进度只保底到88%，避免主搜索未结束时进度条提前冲到90%以上
             var timeRatio = elapsed / _progressEstTotal;
-            var timePct = Math.floor(95 * (1 - Math.exp(-timeRatio * 3)));
+            var timePct = Math.floor(88 * (1 - Math.exp(-timeRatio * 3)));
             
             // 取 时间进度 和 阶段目标进度 的较大值
             var targetNow = Math.max(timePct, _progressTarget);
@@ -4193,6 +5228,19 @@ var BanquetOptimizer = (function() {
 
     function optimize(targetScore, onProgress, onComplete) {
         _targetScore = (targetScore && targetScore > 0) ? targetScore : null;
+        _disableFullGuestRebuild = false;
+        _fullGuestRebuildAttempts = 0;
+        _fullGuestRebuildHits = 0;
+        _debugLog('optimize', '开始自动计算', {
+            targetScore: _targetScore,
+            guestFilter: _guestFilter,
+            activeGuests: _rules.map(function(rule, index) {
+                return {
+                    guest: _getRuleName(index),
+                    satiety: rule.Satiety || 0
+                };
+            })
+        });
         
         if (_isRunning) {
             if (typeof onComplete === 'function') {
@@ -4280,19 +5328,28 @@ var BanquetOptimizer = (function() {
         
         // 多起点搜索 — 精确去重 + 提前终止
         var uniqueSeeds = [];
-        var seenScores = {};
+        var seenSeedSignatures = {};
         for (var si = 0; si < _topCandidates.length; si++) {
             _simState = _cloneSimState(_topCandidates[si]);
             var sc = _fastCalcScore();
-            if (!seenScores[sc]) {
-                seenScores[sc] = true;
-                uniqueSeeds.push({state: _topCandidates[si], score: sc});
+            var sig = _getStateSignature(_topCandidates[si]);
+            if (!seenSeedSignatures[sig]) {
+                seenSeedSignatures[sig] = true;
+                uniqueSeeds.push({
+                    state: _topCandidates[si],
+                    score: sc,
+                    meta: _topCandidateMeta[si] ? {
+                        label: _topCandidateMeta[si].label,
+                        initScore: _topCandidateMeta[si].initScore,
+                        score: _topCandidateMeta[si].score
+                    } : null
+                });
             }
         }
         var seedIdx = 0;
         var totalSeeds = uniqueSeeds.length;
-        // 记录已搜索到的最终分数，用于检测收敛
-        var seenFinalScores = {};
+        // 记录已搜索到的最终状态，用于检测收敛
+        var seenFinalSignatures = {};
         
         function _runSeedSearch() {
             if (seedIdx >= totalSeeds) {
@@ -4306,13 +5363,37 @@ var BanquetOptimizer = (function() {
                 return;
             }
             
-            var currentSeed = seedIdx;
-            seedIdx++;
-            var seedInfo = uniqueSeeds[currentSeed];
-            var seedScore = seedInfo.score;
+	            var currentSeed = seedIdx;
+	            seedIdx++;
+	            var seedInfo = uniqueSeeds[currentSeed];
+	            var seedScore = seedInfo.score;
+	            var seedMeta = seedInfo.meta || { label: 'seed-' + (currentSeed + 1), initScore: seedScore, score: seedScore };
+                var seedStartMs = Date.now();
+                var seedPhaseMs = seedStartMs;
+
+                function _logSeedPhase(phase, extra) {
+                    var now = Date.now();
+                    _debugLog('seed-phase', phase, Object.assign({
+                        seedIndex: currentSeed + 1,
+                        label: seedMeta.label,
+                        currentScore: _bestScore,
+                        elapsedMs: now - seedStartMs,
+                        phaseElapsedMs: now - seedPhaseMs
+                    }, extra || {}));
+                    seedPhaseMs = now;
+                }
             
-            // 跳过分数过低的种子（<最佳90%）
-            if (seedScore < _bestScore * 0.90 && currentSeed > 0) {
+            // 跳过分数过低的种子，但阈值放宽，避免误杀高潜力异构解
+            if (seedScore < _bestScore * CONFIG.seedSkipInitRatio && currentSeed > 0) {
+	                _debugLog('seed-skip', '种子初始分过低，跳过', {
+	                    seedIndex: currentSeed + 1,
+	                    label: seedMeta.label,
+	                    seedScore: seedScore,
+	                    globalBest: _bestScore,
+	                    ratio: _bestScore > 0 ? +(seedScore / _bestScore).toFixed(4) : 1,
+	                    threshold: CONFIG.seedSkipInitRatio,
+                        elapsedMs: Date.now() - seedStartMs
+	                });
                 setTimeout(_runSeedSearch, 2);
                 return;
             }
@@ -4325,6 +5406,11 @@ var BanquetOptimizer = (function() {
             _simState = _cloneSimState(seedInfo.state);
             _bestScore = seedScore;
             _bestSimState = _cloneSimState(_simState);
+            _logStateSnapshot('seed-start', '开始搜索种子', _simState, seedScore, {
+                seedIndex: currentSeed + 1,
+                label: seedMeta.label,
+                initScore: seedMeta.initScore
+            });
             
             // 爬山
             _runClimbingPhase(0, function() {
@@ -4333,9 +5419,27 @@ var BanquetOptimizer = (function() {
                 var climbedScore = _bestScore;
                 var climbImproved = (climbedScore > seedScore);
                 var ratio = globalBestScore > 0 ? climbedScore / globalBestScore : 1;
-                // 条件1：爬山无改进且<90% → 跳过（保守，避免误杀有潜力的种子）
-                // 条件2：即使有改进，<88% → 也跳过（差距太大，跨贵客难以弥补）
-                if (currentSeed > 0 && ((!climbImproved && ratio < 0.90) || ratio < 0.88)) {
+                _logSeedPhase('初始爬山完成', {
+                    before: seedScore,
+                    after: climbedScore,
+                    climbImproved: climbImproved,
+                    ratio: +ratio.toFixed(4)
+                });
+                // 条件1：爬山无改进且仍明显落后 → 跳过
+                // 条件2：即使有改进，但距离最佳仍过大 → 跳过
+                if (currentSeed > 0 && ((!climbImproved && ratio < CONFIG.seedSkipAfterClimbNoImproveRatio) || ratio < CONFIG.seedSkipAfterClimbHardRatio)) {
+	                    _debugLog('seed-skip', '爬山后种子潜力不足，跳过后续深搜', {
+	                        seedIndex: currentSeed + 1,
+	                        label: seedMeta.label,
+	                        seedScore: seedScore,
+	                        climbedScore: climbedScore,
+	                        globalBest: globalBestScore,
+	                        climbImproved: climbImproved,
+	                        ratio: +ratio.toFixed(4),
+	                        noImproveThreshold: CONFIG.seedSkipAfterClimbNoImproveRatio,
+	                        hardThreshold: CONFIG.seedSkipAfterClimbHardRatio,
+                            elapsedMs: Date.now() - seedStartMs
+	                    });
                     _bestScore = globalBestScore;
                     _bestSimState = globalBestState;
                     _setProgressTarget(Math.floor(10 + 80 * seedIdx / totalSeeds));
@@ -4348,8 +5452,9 @@ var BanquetOptimizer = (function() {
                     if (_shouldProcessRule(ri)) activeRules.push(ri);
                 }
                 
-                // 边界种子轻量搜索 — 90%-95%之间的种子只做1轮跨贵客，跳过重建
-                var isLightSeed = (currentSeed > 0 && ratio < 0.95);
+                // 边界种子轻量搜索
+                var isLightSeed = (currentSeed > 0 && ratio < CONFIG.lightSeedRatio);
+                var crossStageImproved = false;
                 if (isLightSeed) {
                 }
                 
@@ -4368,17 +5473,55 @@ var BanquetOptimizer = (function() {
                     crossRound++;
                     // 拆分跨贵客循环，避免阻塞浏览器
                     setTimeout(function() {
+                        var crossRoundStartMs = Date.now();
                         var scoreBefore = _bestScore;
                         var crossImproved = _crossGuestReassign(activeRules);
                         if (crossImproved) {
+                            crossStageImproved = true;
+                            _logStateSnapshot('seed-cross', '跨贵客重分配后提升', _bestSimState, _bestScore, {
+                                seedIndex: currentSeed + 1,
+                                label: seedMeta.label,
+                                before: scoreBefore,
+                                after: _bestScore
+                            });
                             setTimeout(function() {
                                 _simState = _cloneSimState(_bestSimState);
+                                var scoreAfterCross = _bestScore;
                                 _climbRecipeSwap();
                                 var ss = _fastCalcScore();
-                                if (ss > _bestScore) { _bestScore = ss; _bestSimState = _cloneSimState(_simState); }
+                                var swapImproved = false;
+                                if (ss > _bestScore) {
+                                    crossStageImproved = true;
+                                    swapImproved = true;
+                                    _bestScore = ss;
+                                    _bestSimState = _cloneSimState(_simState);
+                                    _logStateSnapshot('seed-cross', '跨贵客后菜谱交换继续提升', _bestSimState, _bestScore, {
+                                        seedIndex: currentSeed + 1,
+                                        label: seedMeta.label,
+                                        afterCross: scoreBefore,
+                                        afterSwap: ss
+                                    });
+                                }
+                                _logSeedPhase('跨贵客轮次完成', {
+                                    crossRound: crossRound,
+                                    before: scoreBefore,
+                                    afterCross: scoreAfterCross,
+                                    after: _bestScore,
+                                    crossImproved: true,
+                                    swapImproved: swapImproved,
+                                    roundElapsedMs: Date.now() - crossRoundStartMs
+                                });
                                 setTimeout(_seedCrossLoop, 2);
                             }, 0);
                         } else {
+                            _logSeedPhase('跨贵客轮次完成', {
+                                crossRound: crossRound,
+                                before: scoreBefore,
+                                after: _bestScore,
+                                crossImproved: false,
+                                swapImproved: false,
+                                roundElapsedMs: Date.now() - crossRoundStartMs
+                            });
                             _seedAfterCross();
                         }
                     }, 0);
@@ -4392,33 +5535,85 @@ var BanquetOptimizer = (function() {
                             _simState = _cloneSimState(_bestSimState);
                             _climbRecipeSwap();
                             var ss = _fastCalcScore();
-                            if (ss > _bestScore) { _bestScore = ss; _bestSimState = _cloneSimState(_simState); }
+                            if (ss > _bestScore) {
+                                _bestScore = ss;
+                                _bestSimState = _cloneSimState(_simState);
+                                _logStateSnapshot('seed-light', '边界种子在菜谱交换后提升', _bestSimState, _bestScore, {
+                                    seedIndex: currentSeed + 1,
+                                    label: seedMeta.label
+                                });
+                            }
                             _finishSeed();
                         }, 0);
                         return;
                     }
                     
-                    // 整贵客重建 — 减少厨师候选数（10→5），且仅在跨贵客有改进时才执行
-                    var crossDidImprove = (_bestScore > seedScore);
+                    // 整贵客重建只在跨贵客阶段确实产生新解时执行
+                    // 之前这里误用 seedScore，导致只要初始爬山有提升就会触发整贵客重建
+                    var crossDidImprove = crossStageImproved;
+                    var allowFullGuestRebuild = CONFIG.enableFullGuestRebuild && crossDidImprove && !_disableFullGuestRebuild;
+                    var fullGuestRebuildReason = allowFullGuestRebuild
+                        ? 'executed'
+                        : (!CONFIG.enableFullGuestRebuild
+                            ? 'config-disabled'
+                            : (crossDidImprove ? 'disabled-after-miss' : 'no-cross-improve'));
                     
                     // 整贵客重建放到setTimeout中
                     setTimeout(function() {
-                        if (crossDidImprove) {
-                            _fullGuestRebuild(activeRules);
-                        } else {
+                        var rebuildBefore = _bestScore;
+                        if (allowFullGuestRebuild) {
+                            _fullGuestRebuildAttempts++;
+                            var rebuildImproved = _fullGuestRebuild(activeRules);
+                            if (rebuildImproved) {
+                                _fullGuestRebuildHits++;
+                            } else {
+                                // 日志显示该分支非常耗时且连续空跑，当前轮首次空跑后直接停用
+                                _disableFullGuestRebuild = true;
+                            }
                         }
+                        _logSeedPhase('整贵客重建完成', {
+                            executed: allowFullGuestRebuild,
+                            reason: fullGuestRebuildReason,
+                            before: rebuildBefore,
+                            after: _bestScore,
+                            improved: _bestScore > rebuildBefore,
+                            disabledAfterMiss: _disableFullGuestRebuild,
+                            attempts: _fullGuestRebuildAttempts,
+                            hits: _fullGuestRebuildHits
+                        });
                         
                         // 菜谱交换也放到独立setTimeout
                         setTimeout(function() {
                             var scoreBeforeFinish = _bestScore;
+                            var finalSwapImproved = false;
                             _simState = _cloneSimState(_bestSimState);
                             _climbRecipeSwap();
                             var ss = _fastCalcScore();
-                            if (ss > _bestScore) { _bestScore = ss; _bestSimState = _cloneSimState(_simState); }
+                            if (ss > _bestScore) {
+                                finalSwapImproved = true;
+                                _bestScore = ss;
+                                _bestSimState = _cloneSimState(_simState);
+                                _logStateSnapshot('seed-finalize', '最终菜谱交换提升', _bestSimState, _bestScore, {
+                                    seedIndex: currentSeed + 1,
+                                    label: seedMeta.label,
+                                    before: scoreBeforeFinish,
+                                    after: ss
+                                });
+                            }
+                            _logSeedPhase('最终菜谱交换完成', {
+                                before: scoreBeforeFinish,
+                                after: _bestScore,
+                                improved: finalSwapImproved
+                            });
                             
-                            var needFinalClimb = (_bestScore > scoreBeforeFinish) || crossDidImprove;
+                            // 末尾完整爬山只在最终菜谱交换真的形成新扰动时再执行
+                            var needFinalClimb = finalSwapImproved;
                             if (needFinalClimb) {
                                 _runClimbingPhase(0, function() {
+                                    _logSeedPhase('最终爬山完成', {
+                                        before: scoreBeforeFinish,
+                                        after: _bestScore
+                                    });
                                     _finishSeed();
                                 }, onProgress);
                             } else {
@@ -4430,8 +5625,9 @@ var BanquetOptimizer = (function() {
                 
                 function _finishSeed() {
                     var seedFinalScore = _bestScore;
-                    // 收敛到已知结果时跳过剩余种子（提前终止）
-                    if (seenFinalScores[seedFinalScore]) {
+                    var finalSig = _getStateSignature(_bestSimState);
+                    // 收敛到已知状态时跳过剩余种子（提前终止）
+                    if (seenFinalSignatures[finalSig]) {
                         // 与全局最佳比较后直接结束
                         if (seedFinalScore > globalBestScore) {
                             globalBestScore = seedFinalScore;
@@ -4442,12 +5638,21 @@ var BanquetOptimizer = (function() {
                         _finishOptimization(onComplete, false);
                         return;
                     }
-                    seenFinalScores[seedFinalScore] = true;
+                    seenFinalSignatures[finalSig] = true;
                     
                     // 与全局最佳比较
                     if (seedFinalScore > globalBestScore) {
                         globalBestScore = seedFinalScore;
                         globalBestState = _cloneSimState(_bestSimState);
+                        _logStateSnapshot('seed-best', '种子刷新全局最佳', globalBestState, globalBestScore, {
+                            seedIndex: currentSeed + 1,
+                            label: seedMeta.label
+                        });
+                        _logIntentDiagnostics('intent-fit', '全局最佳组合的意图契合度', globalBestState, {
+                            seedIndex: currentSeed + 1,
+                            label: seedMeta.label,
+                            score: globalBestScore
+                        });
                     }
                     
                     // 恢复全局最佳
@@ -4461,6 +5666,13 @@ var BanquetOptimizer = (function() {
                     }
                     
                     _setProgressTarget(Math.floor(10 + 80 * seedIdx / totalSeeds));
+	                    _debugLog('seed-finish', '种子搜索完成', {
+	                        seedIndex: currentSeed + 1,
+	                        label: seedMeta.label,
+	                        finalScore: seedFinalScore,
+	                        globalBest: _bestScore,
+                            elapsedMs: Date.now() - seedStartMs
+	                    });
                     
                     setTimeout(_runSeedSearch, 2);
                 }
@@ -4714,6 +5926,7 @@ var BanquetOptimizer = (function() {
      * 整贵客重建：完全清空一个贵客，用不同的首厨师重建
      */
     function _fullGuestRebuild(activeRules) {
+        if (_isSingleGuestMode()) return false;
         var improved = false;
         
         for (var targetIdx = 0; targetIdx < activeRules.length; targetIdx++) {
@@ -4737,30 +5950,26 @@ var BanquetOptimizer = (function() {
                 }
             }
             
-            // 可用厨师（排除其他贵客已用的）
-            var availableChefs = [];
-            for (var i = 0; i < rule.chefs.length; i++) {
-                var chef = rule.chefs[i];
-                if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
-                if (otherUsedChefs[chef.chefId]) continue;
-                availableChefs.push(chef);
-            }
-            availableChefs.sort(function(a, b) { return b.rarity - a.rarity; });
-            
             var triedCombos = {};
             
             // 对每个位置，尝试不同的首厨师
             for (var startPos = 0; startPos < numChefs; startPos++) {
-                for (var firstChefIdx = 0; firstChefIdx < Math.min(5, availableChefs.length); firstChefIdx++) {
-                    var firstChef = availableChefs[firstChefIdx];
-                    if (currentChefSet[firstChef.chefId] && startPos === 0) continue;
+                _simState = _cloneSimState(_bestSimState);
+                for (var clearPos = 0; clearPos < numChefs; clearPos++) {
+                    _simState[targetRule][clearPos] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
+                }
+                var starterChefIds = _getChefSearchCandidates(targetRule, startPos, _getRuntimeConfigValue('rebuildFirstChefTop'));
+                for (var firstChefIdx = 0; firstChefIdx < starterChefIds.length; firstChefIdx++) {
+                    var firstChefId = starterChefIds[firstChefIdx];
+                    if (otherUsedChefs[firstChefId]) continue;
+                    if (currentChefSet[firstChefId] && startPos === 0) continue;
                     
                     _simState = _cloneSimState(_bestSimState);
                     for (var ci = 0; ci < numChefs; ci++) {
                         _simState[targetRule][ci] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
                     }
                     
-                    _simSetChef(targetRule, startPos, firstChef.chefId);
+                    _simSetChef(targetRule, startPos, firstChefId);
                     var strategy0 = _analyzeIntents(targetRule, startPos);
                     if (strategy0.prePlaceList.length > 0) {
                         for (var pp = 0; pp < strategy0.prePlaceList.length; pp++) {
@@ -4832,53 +6041,120 @@ var BanquetOptimizer = (function() {
     }
 
     function _runClimbingPhase(round, onDone, onProgress) {
-        if (round >= CONFIG.maxRounds) {
+        if (round >= _getRuntimeConfigValue('maxRounds')) {
+            _activeClimbRound = -1;
             if (typeof onDone === 'function') onDone();
             return;
         }
         
+        _activeClimbRound = round;
         _simState = _cloneSimState(_bestSimState);
         var scoreBefore = _bestScore;
-        var chefImproved = false, swapImproved = false, recipeImproved = false, recipeSwapImproved = false, jointImproved = false;
+        var chefImproved = false, swapImproved = false, recipeImproved = false, recipeSwapImproved = false, recipeRebuildImproved = false, chefPermuteImproved = false, jointImproved = false;
+        var roundStartMs = Date.now();
+
+        function _logClimbStep(step, beforeScore, improved) {
+            _debugLog('climb-step', '爬山步骤完成', {
+                round: round + 1,
+                step: step,
+                before: beforeScore,
+                after: _bestScore,
+                improved: improved,
+                roundElapsedMs: Date.now() - roundStartMs
+            });
+        }
         
         // 每个操作独立setTimeout，避免阻塞浏览器
         // Step 1: 厨师爬山
         setTimeout(function() {
+            var chefBefore = _bestScore;
             chefImproved = _climbChefs();
+            _logClimbStep('chef', chefBefore, chefImproved);
             
             // Step 2: 厨师交换
             setTimeout(function() {
                 _simState = _cloneSimState(_bestSimState);
+                var swapBefore = _bestScore;
                 swapImproved = _climbChefSwap();
+                _logClimbStep('chef-swap', swapBefore, swapImproved);
                 
                 // Step 3: 菜谱爬山
                 setTimeout(function() {
                     _simState = _cloneSimState(_bestSimState);
+                    var recipeBefore = _bestScore;
                     recipeImproved = _climbRecipes();
+                    _logClimbStep('recipe', recipeBefore, recipeImproved);
                     
                     // Step 4: 菜谱交换
                     setTimeout(function() {
                         _simState = _cloneSimState(_bestSimState);
+                        var recipeSwapBefore = _bestScore;
                         recipeSwapImproved = _climbRecipeSwap();
+                        _logClimbStep('recipe-swap', recipeSwapBefore, recipeSwapImproved);
                         
-                        // Step 5: 厨师+菜谱联合替换（同时换厨师和菜谱，发现单独换找不到的组合）
+                        // Step 5: 固定当前厨师，整套菜谱重建
                         setTimeout(function() {
                             _simState = _cloneSimState(_bestSimState);
-                            jointImproved = _climbJointChefRecipe();
-                        
-                            // 爬山后检查：分数和饱食度都达标时结束
-                            if (_isTargetReachedWithSatiety()) {
-                                if (typeof onDone === 'function') onDone();
-                                return;
-                            }
-                            
-                            if (!chefImproved && !recipeImproved && !swapImproved && !recipeSwapImproved && !jointImproved) {
-                                if (typeof onDone === 'function') onDone();
-                            } else {
+                            var rebuildBefore = _bestScore;
+                            recipeRebuildImproved = _climbFixedChefRecipeRebuild();
+                            _logClimbStep('recipe-rebuild', rebuildBefore, recipeRebuildImproved);
+
+                            // Step 6: 同一组三厨师换位置后整套重建
+                            setTimeout(function() {
+                                _simState = _cloneSimState(_bestSimState);
+                                var permuteBefore = _bestScore;
+                                chefPermuteImproved = _climbChefPermutationRebuild();
+                                _logClimbStep('chef-permute', permuteBefore, chefPermuteImproved);
+
+                                // Step 7: 厨师+菜谱联合替换（同时换厨师和菜谱，发现单独换找不到的组合）
                                 setTimeout(function() {
-                                    _runClimbingPhase(round + 1, onDone, onProgress);
-                                }, 2);
-                            }
+                                    _simState = _cloneSimState(_bestSimState);
+                                    var jointBefore = _bestScore;
+                                    jointImproved = _climbJointChefRecipe();
+                                    _logClimbStep('joint', jointBefore, jointImproved);
+                                    _debugLog('climb-round', '爬山轮次完成', {
+                                        round: round + 1,
+                                        before: scoreBefore,
+                                        after: _bestScore,
+                                        chefImproved: chefImproved,
+                                        chefSwapImproved: swapImproved,
+                                        recipeImproved: recipeImproved,
+                                        recipeSwapImproved: recipeSwapImproved,
+                                        recipeRebuildImproved: recipeRebuildImproved,
+                                        chefPermuteImproved: chefPermuteImproved,
+                                        jointImproved: jointImproved,
+                                        elapsedMs: Date.now() - roundStartMs
+                                    });
+                                    if (chefImproved || swapImproved || recipeRebuildImproved || chefPermuteImproved || jointImproved) {
+                                        _logIntentDiagnostics('intent-fit', '厨师分配变化后的意图契合度', _bestSimState, {
+                                            round: round + 1,
+                                            before: scoreBefore,
+                                            after: _bestScore,
+                                            chefImproved: chefImproved,
+                                            chefSwapImproved: swapImproved,
+                                            recipeRebuildImproved: recipeRebuildImproved,
+                                            chefPermuteImproved: chefPermuteImproved,
+                                            jointImproved: jointImproved
+                                        });
+                                    }
+                                
+                                    // 爬山后检查：分数和饱食度都达标时结束
+                                    if (_isTargetReachedWithSatiety()) {
+                                        _activeClimbRound = -1;
+                                        if (typeof onDone === 'function') onDone();
+                                        return;
+                                    }
+                                    
+                                    if (!chefImproved && !recipeImproved && !swapImproved && !recipeSwapImproved && !recipeRebuildImproved && !chefPermuteImproved && !jointImproved) {
+                                        _activeClimbRound = -1;
+                                        if (typeof onDone === 'function') onDone();
+                                    } else {
+                                        setTimeout(function() {
+                                            _runClimbingPhase(round + 1, onDone, onProgress);
+                                        }, 2);
+                                    }
+                                }, 0);
+                            }, 0);
                         }, 0);
                     }, 0);
                 }, 0);
@@ -4889,137 +6165,196 @@ var BanquetOptimizer = (function() {
     // ==================== 完成：写回系统 ====================
 
     function _finishOptimization(onComplete) {
-        // 防止重复调用
-        if (!_isRunning) return;
-        
-        // 停止匀速进度定时器
-        _stopProgressTimer();
-        
-        // 将最佳模拟状态写回系统（这里才触碰DOM）
+        if (!_isRunning || _isFinishing) return;
+        _isFinishing = true;
+
         var memTotal = 0;
-        if (_bestSimState) {
-            // 先恢复到最佳状态
-            _simState = _bestSimState;
 
-            function _isRecipeSkillQualified(chefObj, recipeData) {
-                if (!recipeData) return false;
-                if (!chefObj) return false;
-                if (recipeData.stirfry > 0 && (!chefObj.stirfryVal || chefObj.stirfryVal < recipeData.stirfry)) return false;
-                if (recipeData.boil > 0 && (!chefObj.boilVal || chefObj.boilVal < recipeData.boil)) return false;
-                if (recipeData.knife > 0 && (!chefObj.knifeVal || chefObj.knifeVal < recipeData.knife)) return false;
-                if (recipeData.fry > 0 && (!chefObj.fryVal || chefObj.fryVal < recipeData.fry)) return false;
-                if (recipeData.bake > 0 && (!chefObj.bakeVal || chefObj.bakeVal < recipeData.bake)) return false;
-                if (recipeData.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < recipeData.steam)) return false;
-                return true;
+        function _cleanupAndComplete(finalScore) {
+            var totalTime = Date.now() - (_timeStats.startTime || Date.now());
+            _bestResult = { score: finalScore };
+            _isRunning = false;
+            _isFinishing = false;
+            _stopProgressTimer();
+
+            if (typeof onComplete === 'function') {
+                onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
             }
 
-            function _repairFinalInvalidRecipesSequentially() {
-                for (var ri = 0; ri < _rules.length; ri++) {
-                    if (!_shouldProcessRule(ri)) continue;
-                    var rule = _rules[ri];
-                    var numChefs = rule.IntentList ? rule.IntentList.length : 3;
-                    for (var ci = 0; ci < numChefs; ci++) {
-                        var chefObj = _simState[ri][ci].chefObj;
-                        if (!chefObj || !_simState[ri][ci].chefId) continue;
-                        for (var reci = 0; reci < 3; reci++) {
-                            var currentRecipe = _simState[ri][ci].recipes[reci];
-                            if (!currentRecipe || !currentRecipe.data) continue;
-                            if (_isRecipeSkillQualified(chefObj, currentRecipe.data)) continue;
+            _simState = null;
+            _bestSimState = null;
+            _topCandidates = [];
+            _topCandidateMeta = [];
+            _intentCache = {};
+            _recipeDependentIntentCache = {};
+            _threeSkillIntentCache = {};
+            _condimentIntentCache = {};
+            _rarityRankIntentCache = {};
+            _cookSkillIntentCache = {};
+            _synergyCache = {};
+            _intentAddCache = {};
+            _priceAuraChefCache = {};
+            _chefMap = {};
+            _recipeMap = {};
+            _menusByRule = [];
+            _rules = [];
+            _gameData = null;
+            _cachedConfig = {};
+        }
 
-                            _simSetRecipe(ri, ci, reci, null);
-                            var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 1, true);
-                            if (recipeRanking.length > 0) {
-                                _simSetRecipe(ri, ci, reci, recipeRanking[0].recipeId);
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // 补充缺失的厨师：如果有位置没有厨师，用未使用的厨师补上并重选菜谱
-            var usedChefIds = {};
+        if (!_bestSimState) {
+            _cleanupAndComplete(0);
+            return;
+        }
+
+        _simState = _bestSimState;
+        var finishStageStart = Date.now();
+
+        function _logFinishStage(stage, extra) {
+            _debugLog('final-stage', stage, Object.assign({
+                elapsedMs: Date.now() - finishStageStart
+            }, extra || {}));
+        }
+
+        function _isRecipeSkillQualified(chefObj, recipeData) {
+            if (!recipeData) return false;
+            if (!chefObj) return false;
+            if (recipeData.stirfry > 0 && (!chefObj.stirfryVal || chefObj.stirfryVal < recipeData.stirfry)) return false;
+            if (recipeData.boil > 0 && (!chefObj.boilVal || chefObj.boilVal < recipeData.boil)) return false;
+            if (recipeData.knife > 0 && (!chefObj.knifeVal || chefObj.knifeVal < recipeData.knife)) return false;
+            if (recipeData.fry > 0 && (!chefObj.fryVal || chefObj.fryVal < recipeData.fry)) return false;
+            if (recipeData.bake > 0 && (!chefObj.bakeVal || chefObj.bakeVal < recipeData.bake)) return false;
+            if (recipeData.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < recipeData.steam)) return false;
+            return true;
+        }
+
+        function _repairFinalInvalidRecipesSequentially() {
             for (var ri = 0; ri < _rules.length; ri++) {
-                if (!_shouldProcessRule(ri)) continue;  // 跳过不需要处理的贵客
+                if (!_shouldProcessRule(ri)) continue;
                 var rule = _rules[ri];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
                 for (var ci = 0; ci < numChefs; ci++) {
-                    if (_simState[ri][ci].chefId) {
-                        usedChefIds[_simState[ri][ci].chefId] = true;
+                    var chefObj = _simState[ri][ci].chefObj;
+                    if (!chefObj || !_simState[ri][ci].chefId) continue;
+                    for (var reci = 0; reci < 3; reci++) {
+                        var currentRecipe = _simState[ri][ci].recipes[reci];
+                        if (!currentRecipe || !currentRecipe.data) continue;
+                        if (_isRecipeSkillQualified(chefObj, currentRecipe.data)) continue;
+
+                        _simSetRecipe(ri, ci, reci, null);
+                        var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 1, true);
+                        if (recipeRanking.length > 0) {
+                            _simSetRecipe(ri, ci, reci, recipeRanking[0].recipeId);
+                        }
                     }
                 }
             }
-            
-            // 辅助函数：为指定位置优化菜谱（只替换厨师技法不达标的菜谱，保留能做的）
-            function _fillRecipesWithSkillCheck(ri, ci) {
-                var chefObj = _simState[ri][ci].chefObj;
-                var usedRecipeIds = {};
-                // 收集当前贵客已用的菜谱（排除当前位置）
+        }
+
+        function _repairFinalDuplicateRecipesSequentially() {
+            var seenRecipeIds = {};
+            for (var ri = 0; ri < _rules.length; ri++) {
+                if (!_shouldProcessRule(ri)) continue;
                 var rule = _rules[ri];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
-                for (var oci = 0; oci < numChefs; oci++) {
-                    if (oci === ci) continue; // 排除当前位置
-                    for (var oreci = 0; oreci < 3; oreci++) {
-                        var r = _simState[ri][oci].recipes[oreci];
-                        if (r && r.data) usedRecipeIds[r.data.recipeId] = true;
-                    }
-                }
-                
-                // 检查当前位置每个菜谱，只替换技法不达标的
-                var skills = ['stirfry', 'boil', 'knife', 'fry', 'bake', 'steam'];
-                for (var reci = 0; reci < 3; reci++) {
-                    var currentRecipe = _simState[ri][ci].recipes[reci];
-                    var needReplace = false;
-                    
-                    if (!currentRecipe || !currentRecipe.data) {
-                        // 没有菜谱，需要分配
-                        needReplace = true;
-                    } else if (chefObj) {
-                        // 检查厨师技法是否足够做这道菜
-                        for (var sk = 0; sk < skills.length; sk++) {
-                            var s = skills[sk];
-                            if (currentRecipe.data[s] > 0 && (!chefObj[s] || chefObj[s] < currentRecipe.data[s])) {
-                                needReplace = true;
-                                break;
-                            }
+                for (var ci = 0; ci < numChefs; ci++) {
+                    for (var reci = 0; reci < 3; reci++) {
+                        var currentRecipe = _simState[ri][ci].recipes[reci];
+                        if (!currentRecipe || !currentRecipe.data || !currentRecipe.data.recipeId) continue;
+                        var currentRecipeId = currentRecipe.data.recipeId;
+                        if (!seenRecipeIds[currentRecipeId]) {
+                            seenRecipeIds[currentRecipeId] = true;
+                            continue;
                         }
-                    }
-                    
-                    if (needReplace) {
-                        // 清空当前菜谱
-                        _simState[ri][ci].recipes[reci] = {data: null, quantity: 0, max: 0};
-                        // 找能做的最高分菜谱
+
+                        _simSetRecipe(ri, ci, reci, null);
                         var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 50, true);
                         for (var rk = 0; rk < recipeRanking.length; rk++) {
-                            var rd = recipeRanking[rk];
-                            if (usedRecipeIds[rd.recipeId]) continue;
-                            // 检查厨师技法是否足够
-                            var canMake = true;
-                            if (chefObj && rd.data) {
-                                for (var sk = 0; sk < skills.length; sk++) {
-                                    var s = skills[sk];
-                                    if (rd.data[s] > 0 && (!chefObj[s] || chefObj[s] < rd.data[s])) {
-                                        canMake = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (canMake) {
-                                _simSetRecipe(ri, ci, reci, rd.recipeId);
-                                usedRecipeIds[rd.recipeId] = true;
-                                break;
-                            }
+                            var candidateId = recipeRanking[rk].recipeId;
+                            if (seenRecipeIds[candidateId]) continue;
+                            _simSetRecipe(ri, ci, reci, candidateId);
+                            seenRecipeIds[candidateId] = true;
+                            break;
                         }
-                    } else {
-                        // 保留当前菜谱，加入已用列表
-                        usedRecipeIds[currentRecipe.data.recipeId] = true;
                     }
                 }
             }
-            
-            // 第一轮：补充缺失厨师并分配菜谱
+        }
+
+        var usedChefIds = {};
+        for (var ri = 0; ri < _rules.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
+            var rule = _rules[ri];
+            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+            for (var ci = 0; ci < numChefs; ci++) {
+                if (_simState[ri][ci].chefId) {
+                    usedChefIds[_simState[ri][ci].chefId] = true;
+                }
+            }
+        }
+
+        function _fillRecipesWithSkillCheck(ri, ci) {
+            var chefObj = _simState[ri][ci].chefObj;
+            var usedRecipeIds = {};
+            var rule = _rules[ri];
+            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+            for (var oci = 0; oci < numChefs; oci++) {
+                if (oci === ci) continue;
+                for (var oreci = 0; oreci < 3; oreci++) {
+                    var r = _simState[ri][oci].recipes[oreci];
+                    if (r && r.data) usedRecipeIds[r.data.recipeId] = true;
+                }
+            }
+
+            var skills = ['stirfry', 'boil', 'knife', 'fry', 'bake', 'steam'];
+            for (var reci = 0; reci < 3; reci++) {
+                var currentRecipe = _simState[ri][ci].recipes[reci];
+                var needReplace = false;
+
+                if (!currentRecipe || !currentRecipe.data) {
+                    needReplace = true;
+                } else if (chefObj) {
+                    for (var sk = 0; sk < skills.length; sk++) {
+                        var s = skills[sk];
+                        if (currentRecipe.data[s] > 0 && (!chefObj[s] || chefObj[s] < currentRecipe.data[s])) {
+                            needReplace = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (needReplace) {
+                    _simState[ri][ci].recipes[reci] = {data: null, quantity: 0, max: 0};
+                    var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 50, true);
+                    for (var rk = 0; rk < recipeRanking.length; rk++) {
+                        var rd = recipeRanking[rk];
+                        if (usedRecipeIds[rd.recipeId]) continue;
+                        var canMake = true;
+                        if (chefObj && rd.data) {
+                            for (var skillIndex = 0; skillIndex < skills.length; skillIndex++) {
+                                var skillName = skills[skillIndex];
+                                if (rd.data[skillName] > 0 && (!chefObj[skillName] || chefObj[skillName] < rd.data[skillName])) {
+                                    canMake = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if (canMake) {
+                            _simSetRecipe(ri, ci, reci, rd.recipeId);
+                            usedRecipeIds[rd.recipeId] = true;
+                            break;
+                        }
+                    }
+                } else {
+                    usedRecipeIds[currentRecipe.data.recipeId] = true;
+                }
+            }
+        }
+
+        function _runMissingChefRepair() {
             var fixedPositions = [];
             for (var ri = 0; ri < _rules.length; ri++) {
-                if (!_shouldProcessRule(ri)) continue;  // 跳过不需要处理的贵客
+                if (!_shouldProcessRule(ri)) continue;
                 var rule = _rules[ri];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
                 for (var ci = 0; ci < numChefs; ci++) {
@@ -5037,15 +6372,13 @@ var BanquetOptimizer = (function() {
                     }
                 }
             }
-            
-            // 第二轮：对每个位置单独迭代优化厨师和菜谱，直到收敛
-            // 每次替换菜谱后重新查找最优厨师，循环直到不再改进
+
             var maxIterations = 10;
             for (var fi = 0; fi < fixedPositions.length; fi++) {
                 var pos = fixedPositions[fi];
-                var rule = _rules[pos.ri];
-                var allChefs = rule.chefs || [];
-                
+                var posRule = _rules[pos.ri];
+                var allChefs = posRule.chefs || [];
+
                 for (var iter = 0; iter < maxIterations; iter++) {
                     var currentChefId = _simState[pos.ri][pos.ci].chefId;
                     var currentScore = _calcRuleScore(pos.ri, true);
@@ -5053,118 +6386,150 @@ var BanquetOptimizer = (function() {
                     var bestChefId = currentChefId;
                     var bestRecipes = [];
                     for (var reci = 0; reci < 3; reci++) {
-                        var r = _simState[pos.ri][pos.ci].recipes[reci];
-                        bestRecipes.push(r && r.data ? r.data.recipeId : null);
+                        var currentBestRecipe = _simState[pos.ri][pos.ci].recipes[reci];
+                        bestRecipes.push(currentBestRecipe && currentBestRecipe.data ? currentBestRecipe.data.recipeId : null);
                     }
-                    
-                    // 尝试每个未使用的厨师
-                    for (var j = 0; j < allChefs.length; j++) {
-                        var candidateId = allChefs[j].chefId;
-                        // 跳过已被其他位置使用的厨师（但允许当前位置的厨师）
+
+                    for (var chefIdx = 0; chefIdx < allChefs.length; chefIdx++) {
+                        var candidateId = allChefs[chefIdx].chefId;
                         if (usedChefIds[candidateId] && candidateId !== currentChefId) continue;
-                        // 跳过未拥有的厨师（如果启用了只用已有）
-                        if (_cachedConfig.useGot && !allChefs[j].got) continue;
-                        
-                        // 换厨师并重新分配菜谱
+                        if (_cachedConfig.useGot && !allChefs[chefIdx].got) continue;
+
                         _simSetChef(pos.ri, pos.ci, candidateId);
                         _fillRecipesWithSkillCheck(pos.ri, pos.ci);
                         var newScore = _calcRuleScore(pos.ri, true);
-                        
+
                         if (newScore > bestScore) {
                             bestScore = newScore;
                             bestChefId = candidateId;
                             bestRecipes = [];
-                            for (var reci = 0; reci < 3; reci++) {
-                                var r = _simState[pos.ri][pos.ci].recipes[reci];
-                                bestRecipes.push(r && r.data ? r.data.recipeId : null);
+                            for (var bestReci = 0; bestReci < 3; bestReci++) {
+                                var bestRec = _simState[pos.ri][pos.ci].recipes[bestReci];
+                                bestRecipes.push(bestRec && bestRec.data ? bestRec.data.recipeId : null);
                             }
                         }
                     }
-                    
-                    // 应用本轮最佳结果
+
                     if (bestChefId !== currentChefId) {
                         usedChefIds[currentChefId] = false;
                         usedChefIds[bestChefId] = true;
                     }
                     _simSetChef(pos.ri, pos.ci, bestChefId);
-                    for (var reci = 0; reci < 3; reci++) {
-                        _simSetRecipe(pos.ri, pos.ci, reci, bestRecipes[reci]);
+                    for (var applyReci = 0; applyReci < 3; applyReci++) {
+                        _simSetRecipe(pos.ri, pos.ci, applyReci, bestRecipes[applyReci]);
                     }
-                    
-                    // 如果没有改进，该位置收敛，进入下一个位置
+
                     if (bestScore <= currentScore) break;
                 }
             }
-            
-            // 第三轮：如果饱食度不达标，调用现有的菜谱爬山函数
-            if (!_isAllSatietyOk()) {
-                // 先把当前状态设为最佳状态，这样爬山函数才能基于当前状态优化
-                _bestSimState = _cloneSimState(_simState);
-                _bestScore = _fastCalcScore();
-                
-                _climbRecipes();
-                _simState = _cloneSimState(_bestSimState);
-                _climbRecipeSwap();
-            }
 
+            return fixedPositions.length;
+        }
+
+        function _finishScoreAndCleanup() {
+            _logFinishStage('真实分数计算开始');
+            _setProgressTarget(99);
+            setTimeout(function() {
+                if (typeof calCustomResults === 'function') {
+                    calCustomResults(_gameData);
+                }
+                var finalScore = (typeof calCustomRule !== 'undefined' && calCustomRule) ? (calCustomRule.score || 0) : 0;
+
+                if (memTotal > 0 && finalScore !== memTotal) {
+                    _debugLog('final', '内存分与页面实分不一致', {
+                        memoryScore: memTotal,
+                        finalScore: finalScore,
+                        diff: finalScore - memTotal
+                    });
+                } else if (memTotal > 0) {
+                    _debugLog('final', '内存分与页面实分一致', {
+                        memoryScore: memTotal,
+                        finalScore: finalScore
+                    });
+                }
+                if (_targetScore) {
+                    _debugLog('final', '目标分检查', {
+                        targetScore: _targetScore,
+                        reached: finalScore >= _targetScore,
+                        finalScore: finalScore
+                    });
+                }
+
+                _logFinalCombination();
+                _cleanupAndComplete(finalScore);
+            }, 0);
+        }
+
+        function _applyBestStateToSystemAsync() {
+            _logFinishStage('写回页面开始');
+            _setProgressTarget(98);
+            setTimeout(function() {
+                _applySimStateToSystem(_bestSimState);
+                _logFinishStage('写回页面完成');
+                _finishScoreAndCleanup();
+            }, 0);
+        }
+
+        function _calcFinalMemoryScoreAsync() {
+            _logFinishStage('内存计分开始');
+            _setProgressTarget(97);
+            setTimeout(function() {
+                var memScores = [];
+                for (var ri = 0; ri < _rules.length; ri++) {
+                    var rScore = _calcRuleScore(ri, true);
+                    memScores.push(rScore);
+                    memTotal += rScore;
+                }
+                _logFinishStage('内存计分完成', {
+                    memoryScore: memTotal
+                });
+                _applyBestStateToSystemAsync();
+            }, 0);
+        }
+
+        function _runSatietyRepairAsync() {
+            _logFinishStage('饱食度修复开始');
+            _setProgressTarget(95);
+            setTimeout(function() {
+                if (!_isAllSatietyOk()) {
+                    _bestSimState = _cloneSimState(_simState);
+                    _bestScore = _fastCalcScore();
+                    _climbRecipes();
+                    _simState = _cloneSimState(_bestSimState);
+                    _climbRecipeSwap();
+                }
+
+                _repairFinalInvalidRecipesSequentially();
+                _repairFinalDuplicateRecipesSequentially();
+                _bestSimState = _cloneSimState(_simState);
+                _logFinishStage('饱食度修复完成', {
+                    satietyOk: _isAllSatietyOk()
+                });
+                _calcFinalMemoryScoreAsync();
+            }, 0);
+        }
+
+        function _runMissingChefRepairAsync() {
+            _logFinishStage('缺失厨师修复开始');
+            _setProgressTarget(93);
+            setTimeout(function() {
+                var fixedCount = _runMissingChefRepair();
+                _logFinishStage('缺失厨师修复完成', {
+                    fixedPositions: fixedCount
+                });
+                _runSatietyRepairAsync();
+            }, 0);
+        }
+
+        _logFinishStage('开始收尾');
+        _setProgressTarget(91);
+        setTimeout(function() {
+            _logFinishStage('非法与重复菜修复开始');
             _repairFinalInvalidRecipesSequentially();
-            
-            // 更新最佳状态
-            _bestSimState = _cloneSimState(_simState);
-            
-            // 计算内存分数明细
-            var memScores = [];
-            for (var ri = 0; ri < _rules.length; ri++) {
-                var rScore = _calcRuleScore(ri, true);
-                memScores.push(rScore);
-                memTotal += rScore;
-            }
-            _applySimStateToSystem(_bestSimState);
-        }
-        
-        var totalTime = Date.now() - (_timeStats.startTime || Date.now());
-        
-        // 用系统函数算一次真实分数
-        if (typeof calCustomResults === 'function') {
-            calCustomResults(_gameData);
-        }
-        var finalScore = (typeof calCustomRule !== 'undefined' && calCustomRule) ? (calCustomRule.score || 0) : 0;
-        
-        if (memTotal > 0 && finalScore !== memTotal) {
-        } else if (memTotal > 0) {
-        }
-        if (_targetScore) {
-        }
-        
-        _logFinalCombination();
-        
-        _bestResult = { score: finalScore };
-        _isRunning = false;
-        
-        // 先调用完成回调（回调中的 applyResult 仍需要 _gameData 等数据）
-        if (typeof onComplete === 'function') {
-            onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
-        }
-        
-        // 释放大对象，减少内存占用，避免影响后续操作（如导入数据）
-        _simState = null;
-        _bestSimState = null;
-        _topCandidates = [];
-        _intentCache = {};
-        _recipeDependentIntentCache = {};
-        _threeSkillIntentCache = {};
-        _condimentIntentCache = {};
-        _rarityRankIntentCache = {};
-        _cookSkillIntentCache = {};
-        _synergyCache = {};
-        _intentAddCache = {};
-        _priceAuraChefCache = {};
-        _chefMap = {};
-        _recipeMap = {};
-        _menusByRule = [];
-        _rules = [];
-        _gameData = null;
-        _cachedConfig = {};
+            _repairFinalDuplicateRecipesSequentially();
+            _logFinishStage('非法与重复菜修复完成');
+            _runMissingChefRepairAsync();
+        }, 0);
     }
 
     /**
@@ -5187,6 +6552,7 @@ var BanquetOptimizer = (function() {
     }
 
     function _logFinalCombination() {
+        var breakdowns = [];
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
             if (!_shouldProcessRule(ruleIndex)) continue;
             
@@ -5203,9 +6569,18 @@ var BanquetOptimizer = (function() {
                     var rec = slot.recipes[reci];
                     recipes.push(rec.data ? rec.data.name : '未选择');
                 }
-                
             }
+            breakdowns.push(_buildRuleBreakdown(ruleIndex));
         }
+        _debugLog('final', '最终组合明细', {
+            bestScore: _bestScore,
+            satietyOk: _isAllSatietyOk(),
+            satiety: _buildSnapshotPayload(_bestSimState, _bestScore).satiety,
+            rules: breakdowns
+        });
+        _logIntentDiagnostics('intent-fit', '最终组合的意图契合度', _bestSimState, {
+            bestScore: _bestScore
+        });
     }
 
     // ==================== 公共接口 ====================
