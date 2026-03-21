@@ -316,6 +316,53 @@ var JianghuOptimizer = (function() {
         return total;
     }
 
+    /**
+     * 精确计算某个rule当前总食材消耗（基于实际菜谱份数和厨师减耗）
+     */
+    function _calcRuleMaterialUsage(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !rule.materials || !ruleState) return 0;
+
+        var remainMaterials = JSON.parse(JSON.stringify(rule.materials));
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            for (var reci = 0; reci < 3; reci++) {
+                var rec = ruleState[ci].recipes[reci];
+                if (rec && rec.data && rec.quantity > 0) {
+                    updateMaterialsData(remainMaterials, rec, rec.quantity, ruleState[ci].chefObj);
+                }
+            }
+        }
+
+        var used = 0;
+        for (var mi = 0; mi < remainMaterials.length; mi++) {
+            var initQty = Number(rule.materials[mi].quantity) || 0;
+            var remainQty = Number(remainMaterials[mi].quantity) || 0;
+            var consumed = initQty - remainQty;
+            if (consumed > 0) used += consumed;
+        }
+        return used;
+    }
+
+    /**
+     * 计算某个rule当前饱食度差值（取整后）
+     */
+    function _calcRuleSatietyGap(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !rule.Satiety || !ruleState) return 0;
+
+        var satTotal = 0;
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            for (var reci = 0; reci < 3; reci++) {
+                var rec = ruleState[ci].recipes[reci];
+                if (rec && rec.data) satTotal += rec.satiety || 0;
+            }
+        }
+
+        return Math.abs(Math.round(satTotal) - Math.round(rule.Satiety));
+    }
+
     function init(gameData) {
         _bestResult = null;
         _isRunning = false;
@@ -756,7 +803,7 @@ var JianghuOptimizer = (function() {
     function _fastGetChefRanking(ruleIndex, chefIndex, fastMode) {
         var rule = _rules[ruleIndex];
         var ruleState = _simState[ruleIndex];
-        
+
         // 检查当前位置是否有菜谱
         var hasRecipe = false;
         for (var reci = 0; reci < 3; reci++) {
@@ -765,7 +812,7 @@ var JianghuOptimizer = (function() {
                 break;
             }
         }
-        
+
         // 收集所有已用厨师
         var usedChefIds = {};
         for (var ri = 0; ri < _simState.length; ri++) {
@@ -776,9 +823,9 @@ var JianghuOptimizer = (function() {
                 }
             }
         }
-        
+
         var results = [];
-        
+
         if (!hasRecipe) {
             // 没有菜谱时，按稀有度排序
             for (var i = 0; i < rule.chefs.length; i++) {
@@ -787,7 +834,9 @@ var JianghuOptimizer = (function() {
                 results.push({
                     chefId: chef.chefId,
                     score: chef.rarity,
-                    used: !!usedChefIds[chef.chefId]
+                    used: !!usedChefIds[chef.chefId],
+                    satGap: 0,
+                    materialUsage: 0
                 });
             }
         } else {
@@ -795,18 +844,19 @@ var JianghuOptimizer = (function() {
             var savedChefObj = ruleState[chefIndex].chefObj;
             var savedChefId = ruleState[chefIndex].chefId;
             var savedEquipObj = ruleState[chefIndex].equipObj;
-            
+
             var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
-            
+            var preferMaterialUsage = (_targetScore && _targetScore > 0);
+
             for (var i = 0; i < rule.chefs.length; i++) {
                 var chef = rule.chefs[i];
                 if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
                 // 跳过已用厨师（快速排名时不需要评估已用的）
                 if (fastMode && usedChefIds[chef.chefId]) continue;
-                
+
                 // 临时设置厨师
                 _simSetChef(ruleIndex, chefIndex, chef.chefId);
-                
+
                 // 检查技法是否足够
                 var chefObj = ruleState[chefIndex].chefObj;
                 var skillOk = true;
@@ -818,31 +868,46 @@ var JianghuOptimizer = (function() {
                 }
                 var diff = getChefSillDiff(tempChef, chefObj);
                 if (diff !== "") skillOk = false;
-                
+
                 // 技法不足直接跳过（不浪费时间算分）
                 if (!skillOk) {
-                    results.push({ chefId: chef.chefId, score: -1, used: false, skillOk: false });
+                    results.push({ chefId: chef.chefId, score: -1, used: false, skillOk: false, satGap: Infinity, materialUsage: Infinity });
                     continue;
                 }
-                
+
                 var score = calcFn();
-                
+                var satGap = preferMaterialUsage ? _calcRuleSatietyGap(ruleIndex) : 0;
+                var materialUsage = preferMaterialUsage ? _calcRuleMaterialUsage(ruleIndex) : 0;
+
                 results.push({
                     chefId: chef.chefId,
                     score: score,
                     used: !!usedChefIds[chef.chefId],
-                    skillOk: true
+                    skillOk: true,
+                    satGap: satGap,
+                    materialUsage: materialUsage
                 });
             }
-            
+
             // 恢复原厨师
             ruleState[chefIndex].chefId = savedChefId;
             ruleState[chefIndex].chefObj = savedChefObj;
             ruleState[chefIndex].equipObj = savedEquipObj;
             _applyChefData(ruleIndex);
         }
-        
+
+        var preferMaterialUsageSort = (_targetScore && _targetScore > 0);
         results.sort(function(a, b) {
+            if (preferMaterialUsageSort) {
+                var satGapA = (typeof a.satGap === 'number') ? a.satGap : Infinity;
+                var satGapB = (typeof b.satGap === 'number') ? b.satGap : Infinity;
+                if (satGapA !== satGapB) return satGapA - satGapB;
+
+                var usageA = (typeof a.materialUsage === 'number') ? a.materialUsage : Infinity;
+                var usageB = (typeof b.materialUsage === 'number') ? b.materialUsage : Infinity;
+                if (usageA !== usageB) return usageA - usageB;
+            }
+
             var chefA = _chefMap[a.chefId];
             var chefB = _chefMap[b.chefId];
             var materialReduceA = _hasMaterialReduceEffect(chefA) ? 1 : 0;
@@ -3479,31 +3544,38 @@ var JianghuOptimizer = (function() {
 
     function _tryIncreaseOnePortionUntilTarget() {
         var bestStep = null;
-        var bestGap = Infinity;
-        var bestScore = -1;
-        
+        var baseScore = _fastCalcScore();
+        var bestDistance = Infinity;   // 与目标分的绝对差值（越小越好）
+        var bestDelta = Infinity;      // 本次补份带来的分数增量（越小越好）
+        var bestOvershoot = Infinity;  // 超出目标分的幅度（越小越好）
+
         for (var ri = 0; ri < _rules.length; ri++) {
             if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
                     var rec = _simState[ri][ci].recipes[reci];
                     if (!rec.data || rec.quantity >= rec.max) continue;
-                    
+
                     rec.quantity += 1;
                     var score = _fastCalcScore();
-                    var gap = _targetScore ? Math.max(0, _targetScore - score) : 0;
-                    
-                    if (gap < bestGap || (gap === bestGap && score > bestScore)) {
-                        bestGap = gap;
-                        bestScore = score;
+                    var distance = Math.abs(_targetScore - score);
+                    var delta = Math.abs(score - baseScore);
+                    var overshoot = score >= _targetScore ? (score - _targetScore) : Infinity;
+
+                    if (distance < bestDistance ||
+                        (distance === bestDistance && delta < bestDelta) ||
+                        (distance === bestDistance && delta === bestDelta && overshoot < bestOvershoot)) {
+                        bestDistance = distance;
+                        bestDelta = delta;
+                        bestOvershoot = overshoot;
                         bestStep = {ri: ri, ci: ci, reci: reci};
                     }
-                    
+
                     rec.quantity -= 1;
                 }
             }
         }
-        
+
         if (!bestStep) return false;
         _simState[bestStep.ri][bestStep.ci].recipes[bestStep.reci].quantity += 1;
         return true;
