@@ -1781,6 +1781,8 @@
         var priceBonus = 0;
         var hasRareGuestSkill = false;
         var hasOpeningTimeSkill = false;
+        var activeSelfUltimateEffects = getActiveSelfUltimateEffectsForCollection(chef);
+        var activeUltimateDesc = activeSelfUltimateEffects.length > 0 ? String(chef.ultimateSkillDisp || '') : '';
 
         // 判断描述是否是“概率额外获得素材”类暴击技能。
         function isCritMaterialSkillDesc(desc) {
@@ -1889,6 +1891,7 @@
         var effectiveEquipEffects = getEffectiveEquipEffects();
 
         scanEffects(chef.specialSkillEffect, chef.specialSkillDisp);
+        scanEffects(activeSelfUltimateEffects, activeUltimateDesc);
         scanEffects(effectiveEquipEffects, chef.equip && (chef.equip.skillDisp || chef.equip.desc || ''));
 
         if (chef.disk && Array.isArray(chef.disk.ambers)) {
@@ -1903,7 +1906,7 @@
         }
 
         var chefCrit = parseCritSkill(String(chef.specialSkillDisp || ''), chef.specialSkillEffect);
-        var ultimateCrit = parseCritSkill(String(chef.ultimateSkillDisp || ''), chef.ultimateSkillEffect);
+        var ultimateCrit = parseCritSkill(activeUltimateDesc, activeSelfUltimateEffects);
         var equipCrit = parseCritSkill(String(chef.equip && (chef.equip.skillDisp || chef.equip.desc || '') || ''), effectiveEquipEffects);
 
         chefCrit.chance += ultimateCrit.chance;
@@ -1916,13 +1919,13 @@
             critChance = chefCrit.chance;
             critMaterial = chefCrit.material;
         } else {
-            (chef.ultimateSkillEffect || []).some(function(effect) {
+            activeSelfUltimateEffects.some(function(effect) {
                 var matched;
                 if (!effect || effect.type !== 'Material_Gain') {
                     return false;
                 }
                 critMaterial = toInt(effect.value, 0);
-                matched = String(chef.ultimateSkillDisp || '').match(/(\d+)%/);
+                matched = activeUltimateDesc.match(/(\d+)%/);
                 critChance = matched ? toInt(matched[1], 0) : 0;
                 return true;
             });
@@ -2030,7 +2033,7 @@
         var bonusInfo = createCollectionBonusInfo();
         var descriptions;
 
-        if (!chef || !toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated)) {
+        if (!chef || !isChefUltimateActiveForCollection(chef, context)) {
             return bonusInfo;
         }
 
@@ -2072,6 +2075,10 @@
                 return;
             }
             var chefBonus = calculateChefGlobalCollectionBonus(item, context);
+            item.providerBonusMeat = chefBonus.meat || 0;
+            item.providerBonusFish = chefBonus.fish || 0;
+            item.providerBonusVeg = chefBonus.veg || 0;
+            item.providerBonusCreation = chefBonus.creation || 0;
             totalBonus.meat += chefBonus.meat;
             totalBonus.fish += chefBonus.fish;
             totalBonus.veg += chefBonus.veg;
@@ -2082,6 +2089,15 @@
             var jadeTarget;
             if (isEmptyCollectionChef(item)) {
                 item.rawValue = 0;
+                item.providerBonusMeat = 0;
+                item.providerBonusFish = 0;
+                item.providerBonusVeg = 0;
+                item.providerBonusCreation = 0;
+                item.teamBonusRawValue = 0;
+                item.teamBonusMeat = 0;
+                item.teamBonusFish = 0;
+                item.teamBonusVeg = 0;
+                item.teamBonusCreation = 0;
                 return;
             }
 
@@ -2089,6 +2105,10 @@
             item.fishVal = toInt(item.baseFishVal, toInt(item.fishVal, 0)) + totalBonus.fish;
             item.vegVal = toInt(item.baseVegVal, toInt(item.vegVal, 0)) + totalBonus.veg;
             item.creationVal = toInt(item.baseCreationVal, toInt(item.creationVal, 0)) + totalBonus.creation;
+            item.teamBonusMeat = item.meatVal - toInt(item.baseMeatVal, 0);
+            item.teamBonusFish = item.fishVal - toInt(item.baseFishVal, 0);
+            item.teamBonusVeg = item.vegVal - toInt(item.baseVegVal, 0);
+            item.teamBonusCreation = item.creationVal - toInt(item.baseCreationVal, 0);
 
             if (areaItem.prefix === 'veg') {
                 if (areaItem.name === '池塘') {
@@ -2118,6 +2138,7 @@
                     return sum;
                 }, 0);
             }
+            item.teamBonusRawValue = item.rawValue - toInt(item.baseRawValue, 0);
 
             totalValue += item.rawValue;
         });
@@ -2149,6 +2170,26 @@
             return !!window.isChefUltimated(chef.chefId || chef.id, context.localData);
         }
         return false;
+    }
+
+    function getActiveSelfUltimateEffectsForCollection(chef) {
+        if (typeof window.getActiveSelfUltimateEffectsForMaterial === 'function') {
+            return window.getActiveSelfUltimateEffectsForMaterial(chef) || [];
+        }
+        if (chef && chef.selfUltimateEffect && chef.selfUltimateEffect.length > 0) {
+            return chef.selfUltimateEffect;
+        }
+        return [];
+    }
+
+    function isChefUltimateActiveForCollection(chef, context) {
+        if (!chef) {
+            return false;
+        }
+        if (typeof chef.__queryUltimateActive === 'boolean') {
+            return chef.__queryUltimateActive;
+        }
+        return isChefUltimatedForQuery(chef, context);
     }
 
     // 构建查询厨师池：
@@ -2207,6 +2248,7 @@
             if (context.onlyUltimated && !isChefUltimatedForQuery(chef, context)) {
                 return;
             }
+            chef.__queryUltimateActive = !!context.applyUltimate && isChefUltimatedForQuery(chef, context);
 
             // 保存原始厨具信息，用于后续根据区域类型应用银布鞋逻辑
             chef.__originalEquip = chef.equip ? cloneData(chef.equip) : null;
@@ -2274,6 +2316,28 @@
     // 检查厨师是否是光环厨师，并返回光环信息
     // 检查实验室光环厨师，并返回光环类型/加成/作用范围。
     function checkAuraChef(chef, skillType, context) {
+        if (!isChefUltimateActiveForCollection(chef, context)) {
+            return { isAura: false, auraType: '', auraBonus: 0, auraScope: '' };
+        }
+        if (chef && chef.ultimateSkillEffect && chef.ultimateSkillEffect.length) {
+            var hasPartialAuraEffect = chef.ultimateSkillEffect.some(function(effect) {
+                if (!effect) {
+                    return false;
+                }
+                if (effect.condition !== 'Partial' && effect.condition !== 'Next') {
+                    return false;
+                }
+                return effect.type === 'Stirfry' || effect.type === 'Boil' || effect.type === 'Knife' ||
+                    effect.type === 'Fry' || effect.type === 'Bake' || effect.type === 'Steam';
+            });
+            if (hasPartialAuraEffect) {
+                var partialIds = context && context.partialUltimateIds ? context.partialUltimateIds : [];
+                var chefId = String(chef.chefId || chef.id || '');
+                if (partialIds.indexOf(chefId) < 0 && partialIds.indexOf(chef.chefId || chef.id) < 0) {
+                    return { isAura: false, auraType: '', auraBonus: 0, auraScope: '' };
+                }
+            }
+        }
         // 检查厨师的修炼技能描述
         // foodgame-local 使用 ultimateSkillList 而不是 skills
         var skillIds = chef.ultimateSkillList || chef.skills || [];
@@ -2515,6 +2579,15 @@
             baseFishVal: 0,
             baseVegVal: 0,
             baseCreationVal: 0,
+            providerBonusMeat: 0,
+            providerBonusFish: 0,
+            providerBonusVeg: 0,
+            providerBonusCreation: 0,
+            teamBonusRawValue: 0,
+            teamBonusMeat: 0,
+            teamBonusFish: 0,
+            teamBonusVeg: 0,
+            teamBonusCreation: 0,
             isEmpty: true
         };
     }
@@ -2537,7 +2610,7 @@
             id: chef.chefId || chef.id || chef.name,
             name: chef.name,
             rarity: toInt(chef.rarity, 0),
-            isUltimate: toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated),
+            isUltimate: typeof chef.__queryUltimateActive === 'boolean' ? chef.__queryUltimateActive : toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated),
             ultimateSkillList: cloneData(chef.ultimateSkillList || []),
             collectionExpectation: +(Number(typeof item.expectation === 'number' ? item.expectation : getCollectionExpectation(meta)).toFixed(2)),
             materialExpectation: +(Number(chef.materialExpectation || 0).toFixed(2)),
@@ -2558,7 +2631,16 @@
             baseMeatVal: toInt(chef.meatVal, 0),
             baseFishVal: toInt(chef.fishVal, 0),
             baseVegVal: toInt(chef.vegVal, 0),
-            baseCreationVal: toInt(chef.creationVal, 0)
+            baseCreationVal: toInt(chef.creationVal, 0),
+            providerBonusMeat: 0,
+            providerBonusFish: 0,
+            providerBonusVeg: 0,
+            providerBonusCreation: 0,
+            teamBonusRawValue: 0,
+            teamBonusMeat: 0,
+            teamBonusFish: 0,
+            teamBonusVeg: 0,
+            teamBonusCreation: 0
         };
     }
 
@@ -2909,6 +2991,36 @@
         var metaHtml = [];
         var secondRowHtml = [];
 
+        function buildCollectionTeamBonusText() {
+            var groupedBonusMap = {};
+            var groupedKeys = [];
+            var bonusItems = [
+                { label: '肉', value: toInt(item.providerBonusMeat, 0) },
+                { label: '鱼', value: toInt(item.providerBonusFish, 0) },
+                { label: '菜', value: toInt(item.providerBonusVeg, 0) },
+                { label: '面', value: toInt(item.providerBonusCreation, 0) }
+            ];
+            bonusItems.forEach(function(bonusItem) {
+                var valueKey;
+                if (!bonusItem.value) {
+                    return;
+                }
+                valueKey = String(bonusItem.value);
+                if (!groupedBonusMap[valueKey]) {
+                    groupedBonusMap[valueKey] = [];
+                    groupedKeys.push(valueKey);
+                }
+                groupedBonusMap[valueKey].push(bonusItem.label);
+            });
+            if (!groupedKeys.length) {
+                return '';
+            }
+            return '团队:' + groupedKeys.map(function(valueKey) {
+                var value = toInt(valueKey, 0);
+                return groupedBonusMap[valueKey].join('/') + (value > 0 ? '+' : '') + value;
+            }).join(' ');
+        }
+
         if (item.prefix === 'lab') {
             // 实验室：第二行显示技法值和红色心法盘
             var auraContribution = Math.max(0, toInt((item.totalContribution || item.rawValue), 0) - toInt(item.rawValue, 0));
@@ -2953,6 +3065,10 @@
             metaHtml.push('<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>');
             
             // 第三行：素材、暴击素材、暴击率
+            var teamBonusText = buildCollectionTeamBonusText();
+            if (teamBonusText) {
+                secondRowHtml.push('<span class="collection-result-chef-meta-item is-aura">' + escapeHtml(teamBonusText) + '</span>');
+            }
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-material">素材 ' + item.materialGain + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-material">暴击素材 ' + item.critMaterial + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-chance">暴击率 ' + item.critChance + '%</span>');
@@ -2962,6 +3078,10 @@
             metaHtml.push('<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>');
             
             // 第三行：素材、暴击素材、暴击率
+            var jadeTeamBonusText = buildCollectionTeamBonusText();
+            if (jadeTeamBonusText) {
+                secondRowHtml.push('<span class="collection-result-chef-meta-item is-aura">' + escapeHtml(jadeTeamBonusText) + '</span>');
+            }
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-material">素材 ' + item.materialGain + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-material">暴击素材 ' + item.critMaterial + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-chance">暴击率 ' + item.critChance + '%</span>');

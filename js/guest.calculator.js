@@ -222,6 +222,156 @@ var GuestRateCalculator = (function($) {
         return parseFloat(value.toFixed(2)).toString();
     }
     
+    function getActiveSelfUltimateEffects(chef, activeSelfUltimateMap) {
+        if (!chef) {
+            return [];
+        }
+        
+        var chefIdStr = String(chef.chefId || '');
+        var effects = (activeSelfUltimateMap && activeSelfUltimateMap[chefIdStr]) || chef.selfUltimateEffect || [];
+        if (effects.length > 0) {
+            return effects;
+        }
+        
+        if (typeof isAllUltimateMode !== 'undefined' && isAllUltimateMode && chef.ultimateSkillEffect) {
+            var allUltimateSelfEffects = [];
+            for (var i = 0; i < chef.ultimateSkillEffect.length; i++) {
+                if (chef.ultimateSkillEffect[i].condition === 'Self') {
+                    allUltimateSelfEffects.push(chef.ultimateSkillEffect[i]);
+                }
+            }
+            return allUltimateSelfEffects;
+        }
+        
+        return [];
+    }
+
+    function isOwnedValueTrue(value) {
+        return value === "是" || value === true || value === 1 || value === "1";
+    }
+
+    function isLocalChefOwnedAndUltimatedForCalc(localData, chefId) {
+        if (!localData || !localData.chefs) {
+            return false;
+        }
+        for (var i = 0; i < localData.chefs.length; i++) {
+            var localChef = localData.chefs[i];
+            if (localChef && localChef.id == chefId && localChef.ult === "是" && isOwnedValueTrue(localChef.got)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function hasUltimateSelectOption(selector, chefId) {
+        if (typeof $ !== 'function') {
+            return false;
+        }
+        return $(selector).find('option[value="' + String(chefId) + '"]').length > 0;
+    }
+
+    function isChefInUltimateConfigList(configUltimatedIds, listName, chefId) {
+        if (!configUltimatedIds) {
+            return false;
+        }
+        var chefIdStr = String(chefId);
+        var setName = listName + 'Set';
+        if (configUltimatedIds[setName] && configUltimatedIds[setName][chefIdStr]) {
+            return true;
+        }
+        var list = configUltimatedIds[listName] || [];
+        for (var i = 0; i < list.length; i++) {
+            if (String(list[i]) === chefIdStr) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function isUltimateConditionActiveForChef(chef, condition, localData, configUltimatedIds) {
+        if (!chef || !chef.chefId) {
+            return false;
+        }
+        if (typeof isAllUltimateMode !== 'undefined' && isAllUltimateMode) {
+            return true;
+        }
+        
+        var listName = null;
+        var selector = null;
+        if (condition === 'Self') {
+            listName = 'self';
+            selector = '#chk-cal-self-ultimate';
+        } else if (condition === 'Partial' || condition === 'Next') {
+            listName = 'partial';
+            selector = '#chk-cal-partial-ultimate';
+        }
+        
+        if (!listName) {
+            return false;
+        }
+        
+        if (isChefInUltimateConfigList(configUltimatedIds, listName, chef.chefId)) {
+            return true;
+        }
+        
+        if (hasUltimateSelectOption(selector, chef.chefId)) {
+            return false;
+        }
+        
+        return isLocalChefOwnedAndUltimatedForCalc(localData, chef.chefId);
+    }
+    
+    /**
+     * 使用与下方总时间一致的口径计算时间百分比
+     * @private
+     * @param {Object} custom - 当前场上配置
+     * @param {Object} rule - 当前规则
+     * @returns {number} 时间百分比
+     */
+    function calculateCurrentTimePercentage(custom, rule) {
+        var timeAddition = 0;
+        var disableChefSkillEffect = rule && rule.hasOwnProperty("DisableChefSkillEffect") && rule.DisableChefSkillEffect != 0;
+        var disableEquipSkillEffect = rule && rule.hasOwnProperty("DisableEquipSkillEffect") && rule.DisableEquipSkillEffect != 0;
+        var partialRecipeAdds = typeof getPartialRecipeAdds === 'function' ? getPartialRecipeAdds(custom, rule) : [];
+        
+        for (var c in custom) {
+            if (!custom[c].chef || !custom[c].chef.chefId) {
+                continue;
+            }
+            
+            var chef = custom[c].chef;
+            var equip = custom[c].equip;
+            
+            if (!disableChefSkillEffect && chef.specialSkillEffect && typeof getTimeAddition === 'function') {
+                timeAddition += getTimeAddition(chef.specialSkillEffect);
+            }
+            
+            var activeSelfUltimateEffects = getActiveSelfUltimateEffects(chef);
+            if (activeSelfUltimateEffects.length > 0 && typeof getTimeAddition === 'function') {
+                timeAddition += getTimeAddition(activeSelfUltimateEffects);
+            }
+            
+            if (!disableEquipSkillEffect && equip && equip.effect && typeof getTimeAddition === 'function') {
+                var equipEffect = equip.effect;
+                if (typeof updateEquipmentEffect === 'function') {
+                    equipEffect = updateEquipmentEffect(equip.effect, activeSelfUltimateEffects);
+                }
+                timeAddition += getTimeAddition(equipEffect);
+            }
+        }
+        
+        if (partialRecipeAdds && partialRecipeAdds[0]) {
+            for (var i = 0; i < partialRecipeAdds[0].length; i++) {
+                var partialAdd = partialRecipeAdds[0][i];
+                if (partialAdd && partialAdd.effect && partialAdd.effect.type === "OpenTime") {
+                    timeAddition += partialAdd.effect.value || 0;
+                }
+            }
+        }
+        
+        return 100 + +(timeAddition.toFixed(2));
+    }
+    
     // ========================================
     // 公共函数
     // ========================================
@@ -759,11 +909,24 @@ var GuestRateCalculator = (function($) {
         // 获取七侠加成数据
         var qixiaData = rule && rule.calQixiaData ? rule.calQixiaData : null;
         
-        // 获取本地数据
-        var localData = typeof getLocalData === 'function' ? getLocalData() : null;
+        var activeSelfUltimateMap = {};
+        if (rule && rule.calSelfUltimateData) {
+            for (var su = 0; su < rule.calSelfUltimateData.length; su++) {
+                var selfUltimateItem = rule.calSelfUltimateData[su];
+                if (selfUltimateItem && selfUltimateItem.chefId) {
+                    activeSelfUltimateMap[String(selfUltimateItem.chefId)] = selfUltimateItem.effect || [];
+                }
+            }
+        }
         
-        // 性能优化：缓存配置页面的已修炼厨师ID列表，避免重复DOM查询
-        var configUltimatedIds = typeof getConfigUltimatedChefIds === 'function' ? getConfigUltimatedChefIds() : null;
+        var activePartialChefSet = {};
+        if (rule && rule.calPartialChefIds) {
+            for (var pi = 0; pi < rule.calPartialChefIds.length; pi++) {
+                activePartialChefSet[String(rule.calPartialChefIds[pi])] = true;
+            }
+        }
+        
+        var globalUltimateSkills = rule && rule.calGlobalUltimateData ? rule.calGlobalUltimateData : [];
         
         // 统计 特技符文率(GuestAntiqueDropRate) 技能
         var guestAntiqueDropRateSkills = [];
@@ -778,14 +941,10 @@ var GuestRateCalculator = (function($) {
             var equip = custom[c].equip;
             var recipes = custom[c].recipes || [];
             
-            // 判断该厨师是否已修炼（使用公共函数，传入缓存的 configUltimatedIds）
-            var isUltimated = false;
-            if (typeof isChefUltimated === 'function') {
-                isUltimated = isChefUltimated(chef.chefId, localData, configUltimatedIds);
-            } else {
-                // 降级方案：如果函数不存在，使用简单判断
-                isUltimated = (chef.ultimate === "是");
-            }
+            var chefIdStr = String(chef.chefId);
+            var activeSelfUltimateEffects = getActiveSelfUltimateEffects(chef, activeSelfUltimateMap);
+            var isPartialUltimateActive = !!activePartialChefSet[chefIdStr] ||
+                (typeof isAllUltimateMode !== 'undefined' && isAllUltimateMode);
             
             // 收集所有技能
             var allSkills = [];
@@ -804,10 +963,10 @@ var GuestRateCalculator = (function($) {
                 }
             }
             
-            // 2. 修炼技能（只有已修炼的厨师才收集）
-            if (isUltimated && chef.ultimateSkillEffect) {
-                for (var i = 0; i < chef.ultimateSkillEffect.length; i++) {
-                    allSkills.push(chef.ultimateSkillEffect[i]);
+            // 2. 当前生效的自我修炼技能
+            if (activeSelfUltimateEffects && activeSelfUltimateEffects.length > 0) {
+                for (var i = 0; i < activeSelfUltimateEffects.length; i++) {
+                    allSkills.push(activeSelfUltimateEffects[i]);
                     skillSources.push({
                         type: 'ultimate',
                         desc: chef.ultimateSkillDisp || ''
@@ -815,13 +974,25 @@ var GuestRateCalculator = (function($) {
                 }
             }
             
-            // 3. 厨具技能（需要考虑 MutiEquipmentSkill 的增强效果）
+            // 3. 当前生效的上场类修炼技能
+            if (isPartialUltimateActive && chef.ultimateSkillEffect) {
+                for (var i = 0; i < chef.ultimateSkillEffect.length; i++) {
+                    var ultimateSkill = chef.ultimateSkillEffect[i];
+                    if (ultimateSkill.condition === 'Partial' || ultimateSkill.condition === 'Next') {
+                        allSkills.push(ultimateSkill);
+                        skillSources.push({
+                            type: 'ultimate',
+                            desc: chef.ultimateSkillDisp || ''
+                        });
+                    }
+                }
+            }
+            
+            // 4. 厨具技能（使用当前生效的自我修炼技能增强厨具效果）
             if (equip && equip.effect) {
-                // 使用 updateEquipmentEffect 来处理 MutiEquipmentSkill
                 var equipEffect = equip.effect;
-                // 只有已修炼的厨师才应用修炼技能对厨具的增强效果
-                if (isUltimated && chef.ultimateSkillEffect && typeof updateEquipmentEffect === 'function') {
-                    equipEffect = updateEquipmentEffect(equip.effect, chef.ultimateSkillEffect);
+                if (activeSelfUltimateEffects.length > 0 && typeof updateEquipmentEffect === 'function') {
+                    equipEffect = updateEquipmentEffect(equip.effect, activeSelfUltimateEffects);
                 }
                 
                 // 为每个厨具技能找到对应的技能描述
@@ -855,7 +1026,7 @@ var GuestRateCalculator = (function($) {
                 }
             }
             
-            // 4. 心法盘技能
+            // 5. 心法盘技能
             if (chef.disk && chef.disk.ambers) {
                 for (var a = 0; a < chef.disk.ambers.length; a++) {
                     var amber = chef.disk.ambers[a];
@@ -982,6 +1153,30 @@ var GuestRateCalculator = (function($) {
             }
         }
         
+        if (globalUltimateSkills.length > 0) {
+            for (var g = 0; g < globalUltimateSkills.length; g++) {
+                var globalSkill = globalUltimateSkills[g];
+                
+                if (globalSkill.type === "GuestApearRate") {
+                    result.guestRate += globalSkill.value || 0;
+                }
+                
+                if (globalSkill.type === "OpenTime") {
+                    var globalTimeValue = globalSkill.value || 0;
+                    globalTimeValue = Math.trunc(globalTimeValue * 10) / 10;
+                    result.timePercentage += globalTimeValue;
+                }
+                
+                if (globalSkill.type === "GuestAntiqueDropRate") {
+                    guestAntiqueDropRateSkills.push({
+                        value: globalSkill.value,
+                        conditionType: globalSkill.conditionType,
+                        conditionValue: globalSkill.conditionValue
+                    });
+                }
+            }
+        }
+        
         // ========== 应用七侠加成 ==========
         if (qixiaData) {
             // 遍历所有场上厨师，检查是否有七侠加成的 tag
@@ -1004,6 +1199,9 @@ var GuestRateCalculator = (function($) {
                 }
             }
         }
+        
+        // 时间字段直接复用下方总时间的 OpenTime 汇总口径，保持一致
+        result.timePercentage = calculateCurrentTimePercentage(custom, rule);
         
         // ========== 计算符文率 ==========
         // 获取品级对应的默认符文率
@@ -1251,15 +1449,34 @@ var GuestRateCalculator = (function($) {
         
         // 以下是厨师的分析逻辑
         var chef = chefOrEquip;
+        var activeSelfUltimateEffects = [];
+        var isPartialUltimateActive = false;
         
-        // 检查该厨师是否已修炼
-        var isUltimated = false;
-        if (typeof isChefUltimated === 'function') {
-            isUltimated = isChefUltimated(chef.chefId, localData, configUltimatedIds);
+        if (chef.ultimateSkillEffect && chef.ultimateSkillEffect.length > 0) {
+            var selfUltimateActive = isUltimateConditionActiveForChef(chef, 'Self', localData, configUltimatedIds);
+            isPartialUltimateActive = isUltimateConditionActiveForChef(chef, 'Partial', localData, configUltimatedIds);
+            
+            if (selfUltimateActive) {
+                for (var se = 0; se < chef.ultimateSkillEffect.length; se++) {
+                    if (chef.ultimateSkillEffect[se].condition === 'Self') {
+                        activeSelfUltimateEffects.push(chef.ultimateSkillEffect[se]);
+                    }
+                }
+            }
         }
         
         // 收集所有技能来源
         var allSkillSources = [];
+        
+        function markCategoryBySkill(skill) {
+            if (!skill) {
+                return;
+            }
+            if (skill.type === 'GuestApearRate') categoryFlags.guestRate = true;
+            else if (skill.type === 'GuestDropCount') categoryFlags.crit = true;
+            else if (skill.type === 'OpenTime' || skill.type === 'CookbookTime') categoryFlags.time = true;
+            else if (skill.type === 'GuestAntiqueDropRate') categoryFlags.rune = true;
+        }
         
         // 1. 厨师技能
         if (chef.specialSkillEffect) {
@@ -1267,6 +1484,7 @@ var GuestRateCalculator = (function($) {
                 var skill = chef.specialSkillEffect[i];
                 if (targetSkillTypes.indexOf(skill.type) >= 0) {
                     result.hasSkills = true;
+                    markCategoryBySkill(skill);
                 }
                 allSkillSources.push({
                     skill: skill,
@@ -1280,10 +1498,15 @@ var GuestRateCalculator = (function($) {
         if (chef.ultimateSkillEffect) {
             for (var i = 0; i < chef.ultimateSkillEffect.length; i++) {
                 var skill = chef.ultimateSkillEffect[i];
-                if (targetSkillTypes.indexOf(skill.type) >= 0) {
-                    result.hasSkills = true;
+                var isActiveUltimateSkill = false;
+                if (skill.condition === 'Self') {
+                    isActiveUltimateSkill = activeSelfUltimateEffects.length > 0;
+                } else if (skill.condition === 'Partial' || skill.condition === 'Next') {
+                    isActiveUltimateSkill = isPartialUltimateActive;
                 }
-                if (isUltimated) {
+                if (isActiveUltimateSkill && targetSkillTypes.indexOf(skill.type) >= 0) {
+                    result.hasSkills = true;
+                    markCategoryBySkill(skill);
                     allSkillSources.push({
                         skill: skill,
                         type: 'ultimate',
@@ -1299,6 +1522,7 @@ var GuestRateCalculator = (function($) {
                 var skill = chef.equip.effect[i];
                 if (targetSkillTypes.indexOf(skill.type) >= 0) {
                     result.hasSkills = true;
+                    markCategoryBySkill(skill);
                 }
                 allSkillSources.push({
                     skill: skill,
@@ -1320,6 +1544,9 @@ var GuestRateCalculator = (function($) {
                             var skill = levelEffect[i];
                             if (targetSkillTypes.indexOf(skill.type) >= 0) {
                                 result.hasSkills = true;
+                                if (skill.type === 'GuestApearRate') {
+                                    markCategoryBySkill(skill);
+                                }
                             }
                             diskSkills.push(skill);
                         }
@@ -1342,44 +1569,6 @@ var GuestRateCalculator = (function($) {
         
         if (!result.hasSkills) {
             return result;
-        }
-        
-        // 设置分类标记
-        if (chef.specialSkillEffect) {
-            for (var i = 0; i < chef.specialSkillEffect.length; i++) {
-                var skill = chef.specialSkillEffect[i];
-                if (skill.type === 'GuestApearRate') categoryFlags.guestRate = true;
-                else if (skill.type === 'GuestDropCount') categoryFlags.crit = true;
-                else if (skill.type === 'OpenTime') categoryFlags.time = true;
-                else if (skill.type === 'GuestAntiqueDropRate') categoryFlags.rune = true;
-            }
-        }
-        
-        if (chef.ultimateSkillEffect) {
-            for (var i = 0; i < chef.ultimateSkillEffect.length; i++) {
-                var skill = chef.ultimateSkillEffect[i];
-                if (skill.type === 'GuestApearRate') categoryFlags.guestRate = true;
-                else if (skill.type === 'GuestDropCount') categoryFlags.crit = true;
-                else if (skill.type === 'OpenTime' || skill.type === 'CookbookTime') categoryFlags.time = true;
-                else if (skill.type === 'GuestAntiqueDropRate') categoryFlags.rune = true;
-            }
-        }
-        
-        if (useEquip && chef.equip && chef.equip.effect) {
-            for (var i = 0; i < chef.equip.effect.length; i++) {
-                var skill = chef.equip.effect[i];
-                if (skill.type === 'GuestApearRate') categoryFlags.guestRate = true;
-                else if (skill.type === 'GuestDropCount') categoryFlags.crit = true;
-                else if (skill.type === 'OpenTime') categoryFlags.time = true;
-                else if (skill.type === 'GuestAntiqueDropRate') categoryFlags.rune = true;
-            }
-        }
-        
-        if (useAmber && diskSkills.length > 0) {
-            for (var i = 0; i < diskSkills.length; i++) {
-                var skill = diskSkills[i];
-                if (skill.type === 'GuestApearRate') categoryFlags.guestRate = true;
-            }
         }
         
         // 计算技能值
@@ -1434,14 +1623,14 @@ var GuestRateCalculator = (function($) {
                 totalTimeAddition += getTimeAddition(chef.specialSkillEffect);
             }
             
-            if (isUltimated && chef.ultimateSkillEffect && typeof getTimeAddition === 'function') {
-                totalTimeAddition += getTimeAddition(chef.ultimateSkillEffect);
+            if (activeSelfUltimateEffects.length > 0 && typeof getTimeAddition === 'function') {
+                totalTimeAddition += getTimeAddition(activeSelfUltimateEffects);
             }
             
             if (useEquip && chef.equip && chef.equip.effect && typeof getTimeAddition === 'function') {
                 var equipEffect = chef.equip.effect;
                 if (typeof updateEquipmentEffect === 'function') {
-                    equipEffect = updateEquipmentEffect(chef.equip.effect, chef.selfUltimateEffect || []);
+                    equipEffect = updateEquipmentEffect(chef.equip.effect, activeSelfUltimateEffects);
                 }
                 totalTimeAddition += getTimeAddition(equipEffect);
             }
@@ -2839,7 +3028,7 @@ var GuestRateCalculator = (function($) {
             var chef = chefs[i];
             
             // 是否只显示已拥有的厨师
-            if (onlyShowOwned && chef.got !== "是") continue;
+            if (onlyShowOwned && !isOwnedValueTrue(chef.got)) continue;
             
             // 分析厨师技能
             var analysis = analyzeChefGuestRateSkills(
