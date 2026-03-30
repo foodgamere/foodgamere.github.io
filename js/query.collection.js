@@ -78,7 +78,9 @@
         bootstrapTimer: null,
         queryLoading: false,
         queryResults: null,
-        activePreviewGroup: 'veg'
+        queryChefPool: null,
+        activePreviewGroup: 'veg',
+        collapsedResultAreas: {}
     };
 
     // 确保采集编队根节点存在，不存在则在自定义面板下创建。
@@ -99,6 +101,7 @@
             state.bootstrapTimer = null;
         }
         state.bootstrappingRule = false;
+        state.queryChefPool = null;
         $('#collection-team-root').addClass('hidden').empty();
         $('#pane-cal-custom').removeClass('collection-team-mode');
     }
@@ -379,9 +382,89 @@
         return getAreaGroupKeyByAreaName(areaName) === 'jade';
     }
 
+    function getRedAmberSlotCountFromChef(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return 0;
+        }
+        return chef.disk.ambers.filter(function(slot) {
+            return slot && slot.type === 1;
+        }).length;
+    }
+
+    function getRedAmberSummaryFromChef(chef) {
+        var counter = {};
+        var order = [];
+        var filledSlots = 0;
+        var redSlots = getRedAmberSlotCountFromChef(chef);
+
+        if (!redSlots || !chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return redSlots ? '空' : '';
+        }
+
+        chef.disk.ambers.forEach(function(slot) {
+            var name;
+            if (!slot || slot.type !== 1) {
+                return;
+            }
+            name = slot.data && slot.data.name ? String(slot.data.name) : '';
+            if (!name) {
+                return;
+            }
+            filledSlots++;
+            if (!counter[name]) {
+                counter[name] = 0;
+                order.push(name);
+            }
+            counter[name]++;
+        });
+
+        if (!redSlots) {
+            return '无红色心法盘';
+        }
+
+        if (!filledSlots) {
+            return '空';
+        }
+
+        return order.map(function(name) {
+            return name + '*' + counter[name];
+        }).join('，');
+    }
+
+    function getRedAmberSummaryFallback(rawChef, redAmberCount, redAmberSlotCount) {
+        var diskSummary = getRedAmberSummaryFromChef(rawChef);
+        if (diskSummary) {
+            return diskSummary;
+        }
+        if (rawChef && rawChef.redAmberSummary) {
+            return String(rawChef.redAmberSummary);
+        }
+        if (rawChef && rawChef.redAmberText) {
+            return String(rawChef.redAmberText);
+        }
+        if (rawChef && rawChef.redAmberDetail) {
+            return String(rawChef.redAmberDetail);
+        }
+        if (redAmberSlotCount > 0) {
+            return '空';
+        }
+        if (redAmberCount <= 0) {
+            return '无红色心法盘';
+        }
+        if (redAmberCount > 0) {
+            return '已配红色遗玉*' + redAmberCount;
+        }
+        return '无红色心法盘';
+    }
+
     // 规范化保存的厨师结构，兼容旧字段名。
     function normalizeSavedChef(rawChef, areaName) {
         var chef = rawChef && typeof rawChef === 'object' ? rawChef : {};
+        var redAmberCount = toInt(chef.redAmberCount || chef.redAmber || chef.redCount, 0);
+        var redAmberSlotCount = toInt(
+            chef.redAmberSlotCount || chef.redAmberSlots || chef.redSlotCount || chef.redAmberTotal,
+            getRedAmberSlotCountFromChef(chef)
+        );
         return {
             name: chef.name || chef.chefName || chef.nickName || '未知厨师',
             rarity: Math.max(0, Math.min(5, toInt(chef.rarity || chef.star || chef.stars || chef.grade, 0))),
@@ -392,7 +475,9 @@
             critMaterial: toInt(chef.critMaterial || chef.totalCritMaterial, 0),
             materialGain: toInt(chef.materialGain || chef.totalMaterialGain, 0),
             origin: chef.origin || chef.source || '',
-            redAmberCount: toInt(chef.redAmberCount || chef.redAmber || chef.redCount, 0)
+            redAmberCount: redAmberCount,
+            redAmberSlotCount: redAmberSlotCount,
+            redAmberSummary: getRedAmberSummaryFallback(chef, redAmberCount, redAmberSlotCount)
         };
     }
 
@@ -1051,13 +1136,14 @@
         var isLabArea = isLabAreaName(chef.area);
         var rarityHtml = getCombinationStarsHtml(chef.rarity);
         var originHtml = formatOriginText(chef.origin || '未知');
+        var redAmberText = chef.redAmberSummary || (chef.redAmberCount > 0 ? ('已配红色遗玉*' + chef.redAmberCount) : '无红色心法盘');
         return [
             '<div class="collection-team-chef-card">',
                 '<div class="collection-team-chef-row">',
                     '<div class="collection-team-chef-head">',
                         '<span class="collection-team-chef-name">', escapeHtml(chef.name), '</span>',
                         rarityHtml ? '<span class="collection-team-chef-stars">' + rarityHtml + '</span>' : '',
-                        isLabArea ? '<span class="collection-team-chef-red-amber' + (chef.redAmberCount ? ' is-active' : '') + '">' + escapeHtml(chef.redAmberCount ? ('红色心法盘X' + chef.redAmberCount) : '无红色心法盘') + '</span>' : '',
+                        isLabArea ? '<span class="collection-team-chef-red-amber' + (chef.redAmberCount ? ' is-active' : '') + '">' + escapeHtml(redAmberText) + '</span>' : '',
                     '</div>',
                     '<div class="collection-team-chef-details">', getHighlightedCollectionDetailsHtml(chef), '</div>',
                 '</div>',
@@ -1600,22 +1686,7 @@
         }
     }
 
-    // 按配置尝试把厨师厨具替换为银布鞋（菜地区/玉片区）。
-    // 返回 true 表示厨具发生变化，需要重算厨师数据。
-    function applySilverShoesIfNeeded(chef, context, areaPrefix) {
-        // 根据区域类型读取对应的银布鞋配置
-        var useSilverShoes = false;
-        if (areaPrefix === 'veg') {
-            useSilverShoes = loadBooleanSetting('useSilverShoes', false);
-        } else if (areaPrefix === 'jade') {
-            useSilverShoes = loadBooleanSetting('useJadeSilverShoes', false);
-        }
-
-        if (!useSilverShoes || !context.applyEquip) {
-            return false;
-        }
-
-        // 检查厨师当前佩戴的厨具（与 show 项目保持一致：支持数字/字符串 ID）
+    function getChefCurrentEquipIdForCollection(chef) {
         var currentEquipId = chef.__originalEquipId;
         if (currentEquipId === null || typeof currentEquipId === 'undefined' || currentEquipId === '') {
             if (chef.__originalEquip && chef.__originalEquip.equipId) {
@@ -1626,24 +1697,98 @@
                 currentEquipId = chef.equipId || '';
             }
         }
-        currentEquipId = String(currentEquipId || '');
-        var specialEquipIds = ['1088', '76', '77', '78', '64', '841'];
+        return String(currentEquipId || '');
+    }
 
-        // 如果是特殊厨具ID，不替换
-        if (currentEquipId && specialEquipIds.indexOf(currentEquipId) >= 0) {
+    function getPreferredCollectionEquipConfigs(areaPrefix) {
+        var configs = [];
+
+        if (areaPrefix === 'veg') {
+            if (loadBooleanSetting('useSilverShoes', false)) {
+                configs.push({ equipId: '65', defaultExpectation: 4 });
+            }
+            if (loadBooleanSetting('useGoldenSilkBoots', false)) {
+                configs.push({ equipId: '64', defaultExpectation: 8 });
+            }
+        } else if (areaPrefix === 'jade') {
+            if (loadBooleanSetting('useJadeSilverShoes', false)) {
+                configs.push({ equipId: '65', defaultExpectation: 4 });
+            }
+            if (loadBooleanSetting('useJadeGoldenSilkBoots', false)) {
+                configs.push({ equipId: '64', defaultExpectation: 8 });
+            }
+        }
+
+        return configs;
+    }
+
+    function evaluateChefCollectionExpectationWithEquip(chef, chefPoolData, areaName, equip, defaultExpectationFloor) {
+        var clonedChef = cloneData(chef);
+        setChefEquip(clonedChef, equip || null);
+        recalculateChefData(clonedChef, chefPoolData);
+        clonedChef.__queryAreaName = areaName;
+        clonedChef.__queryMeta = getChefMaterialSkillMeta(clonedChef);
+        clonedChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
+            ? window.calculateMaterialExpectation(clonedChef, clonedChef.equip || null, clonedChef.disk || {})
+            : 0;
+
+        return {
+            expectation: getCollectionExpectation(clonedChef.__queryMeta),
+            effectiveExpectation: Math.max(
+                Number(getCollectionExpectation(clonedChef.__queryMeta) || 0),
+                Number(defaultExpectationFloor || 0)
+            )
+        };
+    }
+
+    // 按配置尝试把厨师厨具替换为默认采集厨具（银布鞋/金丝筒靴）。
+    // 返回 true 表示厨具发生变化，需要重算厨师数据。
+    function applyPreferredCollectionEquipIfNeeded(chef, chefPoolData, areaPrefix, areaName) {
+        var context = chefPoolData && chefPoolData.context ? chefPoolData.context : null;
+        var preferredConfigs;
+        var currentEquipId;
+        var currentEquip;
+        var currentEvaluation;
+        var bestEquipId;
+        var bestScore;
+
+        if (!context || !context.applyEquip) {
             return false;
         }
 
-        // 使用65号厨具（银布鞋）
-        var silverShoes = getEquipById(context, '65');
-        if (silverShoes) {
-            chef.equip = silverShoes;
-            chef.equipId = silverShoes.equipId || '65';
-            chef.equipDisp = silverShoes.disp || '银布鞋';
-            return true;
+        preferredConfigs = getPreferredCollectionEquipConfigs(areaPrefix).filter(function(config) {
+            return !!getEquipById(context, config.equipId);
+        });
+
+        if (!preferredConfigs.length) {
+            return false;
         }
 
-        return false;
+        currentEquipId = getChefCurrentEquipIdForCollection(chef);
+        currentEquip = currentEquipId ? getEquipById(context, currentEquipId) : null;
+        currentEvaluation = evaluateChefCollectionExpectationWithEquip(chef, chefPoolData, areaName, currentEquip, 0);
+        bestEquipId = currentEquipId;
+        bestScore = Number(currentEvaluation.effectiveExpectation || 0);
+
+        preferredConfigs.forEach(function(config) {
+            var equip = getEquipById(context, config.equipId);
+            var evaluation;
+            if (!equip) {
+                return;
+            }
+            evaluation = evaluateChefCollectionExpectationWithEquip(chef, chefPoolData, areaName, equip, config.defaultExpectation);
+            if (evaluation.effectiveExpectation > bestScore) {
+                bestScore = Number(evaluation.effectiveExpectation || 0);
+                bestEquipId = String(config.equipId || '');
+            }
+        });
+
+        if (String(bestEquipId || '') === String(currentEquipId || '')) {
+            return false;
+        }
+
+        setChefEquip(chef, bestEquipId ? getEquipById(context, bestEquipId) : null);
+        return true;
     }
 
     // 按实验室配置应用150或100厨具（互斥策略）。
@@ -1682,22 +1827,38 @@
     }
 
     // 统一调用 setDataForChef 进行重算，确保技能/厨具/心法盘效果生效。
-    function recalculateChefData(chef, chefPoolData) {
+    function recalculateChefDataWithOptions(chef, chefPoolData, options) {
+        options = options || {};
         if (typeof window.setDataForChef === 'function') {
+            var applyAmbers = typeof options.applyAmbers === 'boolean'
+                ? options.applyAmbers
+                : chefPoolData.context.applyAmbers;
+            var applyEquip = typeof options.applyEquip === 'boolean'
+                ? options.applyEquip
+                : chefPoolData.context.applyEquip;
+            var equip = options.hasOwnProperty('equip')
+                ? options.equip
+                : (chef.equip || null);
             window.setDataForChef(
                 chef,
-                chef.equip || null,
-                chefPoolData.context.applyEquip,
+                equip,
+                applyEquip,
                 chefPoolData.ultimateData.global || [],
                 chefPoolData.partialAdds,
                 chefPoolData.ultimateData.self || [],
                 null,
                 true,
                 null,
-                chefPoolData.context.applyAmbers,
+                applyAmbers,
                 chefPoolData.ultimateData.qixia || null
             );
         }
+    }
+
+    function recalculateChefData(chef, chefPoolData, applyAmbersOverride) {
+        recalculateChefDataWithOptions(chef, chefPoolData, {
+            applyAmbers: typeof applyAmbersOverride === 'boolean' ? applyAmbersOverride : undefined
+        });
     }
 
     // 在规则或gameData中按ID查找厨具。
@@ -1763,6 +1924,783 @@
         }
 
         return getEquipById(context, equipId);
+    }
+
+    function getAmberListForContext(context) {
+        return context.rule.ambers || (context.gameData && context.gameData.ambers) || [];
+    }
+
+    function getLabTechniqueEffectType(areaName) {
+        var effectTypeMap = {
+            '炒': 'Stirfry',
+            '煮': 'Boil',
+            '切': 'Knife',
+            '炸': 'Fry',
+            '烤': 'Bake',
+            '蒸': 'Steam'
+        };
+        return effectTypeMap[areaName] || '';
+    }
+
+    function getLabAmberEffectType(areaName) {
+        return getLabTechniqueEffectType(areaName);
+    }
+
+    function setChefEquip(chef, equip) {
+        if (equip) {
+            chef.equip = equip;
+            chef.equipId = String(equip.equipId || '');
+            chef.equipDisp = equip.disp || equip.name || '';
+        } else {
+            chef.equip = null;
+            chef.equipId = '';
+            chef.equipDisp = '';
+        }
+    }
+
+    function createAreaItemFromResult(areaResult) {
+        return {
+            name: areaResult.areaName,
+            prefix: areaResult.prefix,
+            people: areaResult.people,
+            capacity: areaResult.capacity
+        };
+    }
+
+    function createLabAreaItem(areaName, people) {
+        return {
+            name: areaName,
+            prefix: 'lab',
+            people: people || 0
+        };
+    }
+
+    function hydrateChefMetricForArea(chef, chefPoolData, areaName) {
+        chef.__queryAreaName = areaName;
+        chef.__queryMeta = getChefMaterialSkillMeta(chef);
+        chef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
+            ? window.calculateMaterialExpectation(chef, chef.equip || null, chef.disk || {})
+            : 0;
+        return getAreaQueryMetric(createLabAreaItem(areaName), chef);
+    }
+
+    function enrichLabChefResult(resultItem, chef, areaItem, chefPoolData, auraInfo) {
+        var resolvedAuraInfo = auraInfo || checkAuraChef(chef, areaItem.name, chefPoolData.context);
+        var auraContribution = 0;
+
+        if (resolvedAuraInfo.isAura && (resolvedAuraInfo.auraType === areaItem.name || resolvedAuraInfo.auraType === '全技法')) {
+            auraContribution = resolvedAuraInfo.auraBonus * (resolvedAuraInfo.auraScope === '场上所有厨师' ? areaItem.people : 1);
+        }
+
+        resultItem.auraInfo = resolvedAuraInfo;
+        resultItem.totalContribution = toInt(resultItem.rawValue, 0) + auraContribution;
+        resultItem.equipId = String(chef.equipId || '');
+        resultItem.equipName = chef.equip ? (chef.equip.name || chef.equip.disp || '') : '';
+        resultItem.labBaseChef = cloneData(chef);
+        return resultItem;
+    }
+
+    function getCollectionAreaResult(areaName) {
+        if (!state.queryResults || !Array.isArray(state.queryResults.items)) {
+            return null;
+        }
+        return state.queryResults.items.find(function(result) {
+            return result.areaName === areaName;
+        }) || null;
+    }
+
+    function isCollectionResultAreaCollapsed(areaName) {
+        return !!(state.collapsedResultAreas && state.collapsedResultAreas[areaName]);
+    }
+
+    function getCollectionChefFromPool(chefId, chefName, chefPoolData) {
+        if (!chefPoolData || !Array.isArray(chefPoolData.chefs)) {
+            return null;
+        }
+        return chefPoolData.chefs.find(function(chef) {
+            return String(chef.chefId || chef.id || '') === String(chefId || '') || chef.name === chefName;
+        }) || null;
+    }
+
+    function buildInitialCollectionEquipOptions(item) {
+        var equipName = String(item && item.equipName ? item.equipName : '无厨具');
+        var equipId = String(item && item.equipId ? item.equipId : '');
+        var initialValue = equipId || '__collection_current_none__';
+        var context = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool.context : getCurrentCollectionContext();
+        var equipObj = equipId ? getEquipById(context, equipId) : null;
+        var skillText = equipObj ? String(equipObj.skillDisp || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+        var originText = equipObj ? String(equipObj.origin || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+        return [{
+            display: equipName,
+            value: initialValue,
+            content: buildCollectionEquipOptionContent(equipName, skillText, originText),
+            selected: true,
+            tokens: [equipName, skillText, originText].join(' ').trim()
+        }];
+    }
+
+    function buildCollectionEquipOptionContent(name, skillText, originText) {
+        var html = [
+            '<div class=\'collection-result-equip-option\'>',
+                // getOptionsString 会把 data-content 包在双引号里，这里统一用单引号类名避免打断 option 属性。
+                '<span class=\'collection-result-equip-option-name\'>', escapeHtml(name), '</span>'
+        ];
+
+        if (skillText) {
+            html.push('<span class=\'collection-result-equip-option-skill\'>', escapeHtml(skillText), '</span>');
+        }
+        if (originText) {
+            html.push('<span class=\'collection-result-equip-option-origin\'>', escapeHtml(originText), '</span>');
+        }
+
+        html.push('</div>');
+        return html.join('');
+    }
+
+    function buildCurrentCollectionEquipOption(item, context) {
+        var equipId = String(item && item.equipId ? item.equipId : '');
+        var equipObj = equipId ? getEquipById(context, equipId) : null;
+        var equipName = String(
+            item && item.equipName
+                ? item.equipName
+                : (equipObj && (equipObj.name || equipObj.disp) ? (equipObj.name || equipObj.disp) : '无厨具')
+        );
+        var skillText = equipObj ? String(equipObj.skillDisp || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+        var originText = equipObj ? String(equipObj.origin || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+
+        return {
+            display: equipName,
+            value: equipId,
+            content: buildCollectionEquipOptionContent(equipName, skillText, originText),
+            tokens: [equipName, skillText, originText].join(' ').trim()
+        };
+    }
+
+    function buildHiddenCollectionNoEquipOption() {
+        return {
+            display: '无厨具',
+            value: '',
+            content: buildCollectionEquipOptionContent('无厨具', '', ''),
+            tokens: '无厨具',
+            class: 'hidden'
+        };
+    }
+
+    function buildCollectionEquipOptions(item, areaName) {
+        var areaResult = getCollectionAreaResult(areaName);
+        var areaItem = areaResult ? createAreaItemFromResult(areaResult) : {
+            name: areaName,
+            prefix: item.prefix,
+            people: 0,
+            capacity: 0
+        };
+        var context = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool.context : getCurrentCollectionContext();
+        var chefPoolData = state.queryChefPool && state.queryChefPool.chefs ? state.queryChefPool : null;
+        var equips = context && context.rule && Array.isArray(context.rule.equips) && context.rule.equips.length
+            ? context.rule.equips
+            : ((context && context.gameData && Array.isArray(context.gameData.equips)) ? context.gameData.equips : []);
+        var selectedEquipId = String(item.equipId || '');
+        var baseChef;
+        var noEquipResult;
+        var baseExpectation = 0;
+        var baseRawValue = 0;
+        var options = selectedEquipId ? [] : [buildHiddenCollectionNoEquipOption()];
+        var candidateOptions = [];
+
+        if (!chefPoolData) {
+            chefPoolData = buildCollectionChefPool();
+            if (chefPoolData && !chefPoolData.error) {
+                state.queryChefPool = chefPoolData;
+            }
+        }
+
+        if (!chefPoolData || chefPoolData.error) {
+            if (selectedEquipId) {
+                return [buildCurrentCollectionEquipOption(item, context)].concat(options);
+            }
+            return options;
+        }
+
+        baseChef = getCollectionChefFromPool(item.id, item.name, chefPoolData);
+        if (!baseChef) {
+            if (selectedEquipId) {
+                return [buildCurrentCollectionEquipOption(item, chefPoolData.context)].concat(options);
+            }
+            return options;
+        }
+
+        noEquipResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, '');
+        if (noEquipResult) {
+            baseExpectation = Number(noEquipResult.collectionExpectation || 0);
+            baseRawValue = toInt(noEquipResult.rawValue, 0);
+        }
+
+        equips.forEach(function(equip) {
+            var equipId = String(equip.equipId || '');
+            var trialResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, equipId);
+            var equipName = String(equip.name || equip.disp || ('厨具' + equipId));
+            var skillText = String(equip.skillDisp || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
+            var originText = String(equip.origin || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
+            var rawValue;
+            var expectation;
+            var rawDelta;
+            var expectationDelta;
+
+            if (!trialResult) {
+                return;
+            }
+
+            rawValue = toInt(trialResult.rawValue, 0);
+            expectation = Number(trialResult.collectionExpectation || 0);
+            rawDelta = rawValue - baseRawValue;
+            expectationDelta = expectation - baseExpectation;
+
+            if (areaItem.prefix === 'lab') {
+                if (rawDelta <= 0) {
+                    return;
+                }
+            } else if (rawDelta <= 0 && expectationDelta <= 0) {
+                return;
+            }
+
+            candidateOptions.push({
+                display: equipName,
+                value: equipId,
+                content: buildCollectionEquipOptionContent(equipName, skillText, originText),
+                tokens: [equipName, skillText, originText].join(' '),
+                rawValue: rawValue,
+                expectation: expectation,
+                deltaValue: rawDelta
+            });
+        });
+
+        candidateOptions.sort(function(left, right) {
+            if (areaItem.prefix === 'lab') {
+                if (right.deltaValue !== left.deltaValue) {
+                    return right.deltaValue - left.deltaValue;
+                }
+                if (right.rawValue !== left.rawValue) {
+                    return right.rawValue - left.rawValue;
+                }
+            } else {
+                if (right.expectation !== left.expectation) {
+                    return right.expectation - left.expectation;
+                }
+                if (right.rawValue !== left.rawValue) {
+                    return right.rawValue - left.rawValue;
+                }
+            }
+            return String(left.display).localeCompare(String(right.display), 'zh-Hans-CN');
+        });
+
+        if (selectedEquipId && !candidateOptions.some(function(option) {
+            return option.value === selectedEquipId;
+        })) {
+            var selectedEquip = getEquipById(chefPoolData.context, selectedEquipId);
+            if (selectedEquip) {
+                var selectedEquipName = String(selectedEquip.name || selectedEquip.disp || ('厨具' + selectedEquipId));
+                var selectedSkillText = String(selectedEquip.skillDisp || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
+                var selectedOriginText = String(selectedEquip.origin || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
+                candidateOptions.unshift({
+                    display: selectedEquipName,
+                    value: selectedEquipId,
+                    content: buildCollectionEquipOptionContent(selectedEquipName, selectedSkillText, selectedOriginText),
+                    tokens: [selectedEquipName, selectedSkillText, selectedOriginText].join(' ')
+                });
+            } else {
+                candidateOptions.unshift(buildCurrentCollectionEquipOption(item, chefPoolData.context));
+            }
+        }
+
+        return options.concat(candidateOptions);
+    }
+
+    function decorateCollectionEquipPicker($select) {
+        var picker = $select.data('selectpicker');
+        var $searchBox;
+        var $actions;
+        var isEmptyEquip;
+
+        if (!picker) {
+            return;
+        }
+
+        if (picker.$menu && picker.$menu.length) {
+            picker.$menu.addClass('collection-result-equip-menu');
+        }
+        if (picker.$menuInner && picker.$menuInner.length) {
+            picker.$menuInner.addClass('collection-result-equip-menu-inner');
+        }
+        if (picker.$bsContainer && picker.$bsContainer.length) {
+            picker.$bsContainer.addClass('collection-result-equip-menu-container');
+        }
+
+        if (picker.$menu && picker.$menu.length) {
+            $searchBox = picker.$menu.find('.bs-searchbox');
+            $actions = picker.$menu.find('.collection-result-equip-menu-actions');
+            isEmptyEquip = String($select.data('current-value') || $select.val() || '') === '' || String($select.data('current-value') || $select.val() || '') === '__collection_current_none__';
+
+            if (!$actions.length) {
+                $actions = $(
+                    '<div class="collection-result-equip-menu-actions">' +
+                        '<button type="button" class="btn btn-default collection-result-equip-clear-btn">清空</button>' +
+                    '</div>'
+                );
+                if ($searchBox.length) {
+                    $actions.insertAfter($searchBox);
+                } else {
+                    picker.$menu.prepend($actions);
+                }
+            }
+
+            $actions.find('.collection-result-equip-clear-btn')
+                .toggleClass('is-disabled', isEmptyEquip)
+                .prop('disabled', isEmptyEquip);
+        }
+    }
+
+    function getCollectionEquipSelectHtml(item, areaName) {
+        // 查询和切换分组时只渲染当前厨具，不在这里计算候选厨具过滤结果。
+        var options = buildInitialCollectionEquipOptions(item);
+        var optionsHtml = typeof window.getOptionsString === 'function'
+            ? window.getOptionsString(options)
+            : options.map(function(option) {
+                return '<option value="' + escapeHtml(option.value) + '"' + (option.selected ? ' selected' : '') + '>' + escapeHtml(option.display) + '</option>';
+            }).join('');
+
+        return [
+            '<div class="collection-result-equip-select-wrap">',
+                '<select class="selectpicker collection-result-equip-select" data-width="fit" data-container="body"',
+                    ' data-live-search="true" data-live-search-style="commaSplitContains" data-live-search-placeholder="查找"',
+                    ' data-none-results-text="没有找到" data-size="12"',
+                    ' data-done-button="true" data-done-button-text="关闭"',
+                    ' data-area-name="', escapeHtml(areaName), '"',
+                    ' data-chef-id="', escapeHtml(String(item.id || '')), '"',
+                    ' data-chef-name="', escapeHtml(String(item.name || '')), '"',
+                    ' data-current-value="', escapeHtml(String(options[0].value || '')), '">',
+                    optionsHtml,
+                '</select>',
+            '</div>'
+        ].join('');
+    }
+
+    function initializeCollectionEquipPickers() {
+        $('#collection-team-root select.collection-result-equip-select').each(function() {
+            var $select = $(this);
+            try {
+                if ($select.data('selectpicker')) {
+                    $select.selectpicker('destroy');
+                }
+                $select.selectpicker();
+                decorateCollectionEquipPicker($select);
+                $select.selectpicker('val', String($select.data('current-value') || $select.find('option:first').val() || ''));
+                syncCollectionEquipPickerSelection($select, String($select.data('current-value') || $select.find('option:first').val() || ''));
+            } catch (e) {}
+        });
+    }
+
+    function cleanupCollectionEquipPickers() {
+        $('#collection-team-root select.collection-result-equip-select').each(function() {
+            var $select = $(this);
+            try {
+                if ($select.data('selectpicker')) {
+                    $select.selectpicker('destroy');
+                }
+            } catch (e) {}
+        });
+        $('.collection-result-equip-menu-container').remove();
+    }
+
+    function syncCollectionEquipPickerSelection($select, value) {
+        var picker = $select.data('selectpicker');
+        var options = $select[0] && $select[0].options ? $select[0].options : [];
+        var targetValue = String(value !== undefined ? value : ($select.val() || ''));
+        var selectedIndex = -1;
+        var i;
+
+        for (i = 0; i < options.length; i++) {
+            if (selectedIndex < 0 && String(options[i].value || '') === targetValue) {
+                options[i].selected = true;
+                selectedIndex = i;
+            } else {
+                options[i].selected = false;
+            }
+        }
+
+        if (selectedIndex < 0 && targetValue !== '' && options.length) {
+            options[0].selected = true;
+            selectedIndex = 0;
+            targetValue = String(options[0].value || '');
+        }
+
+        if (picker && typeof picker.setSelected === 'function') {
+            for (i = 0; i < options.length; i++) {
+                picker.setSelected(i, i === selectedIndex);
+            }
+        }
+
+        if (picker && typeof picker.render === 'function') {
+            picker.render();
+        }
+
+        return targetValue;
+    }
+
+    function populateCollectionEquipSelect($select) {
+        var areaName = $select.data('area-name');
+        var chefId = $select.data('chef-id');
+        var chefName = $select.data('chef-name');
+        var areaResult = getCollectionAreaResult(areaName);
+        var chefItem;
+        var options;
+
+        if (!areaResult) {
+            return;
+        }
+
+        chefItem = (areaResult.chefs || []).find(function(chef) {
+            return !isEmptyCollectionChef(chef) && (String(chef.id || '') === String(chefId || '') || chef.name === chefName);
+        });
+        if (!chefItem) {
+            return;
+        }
+
+        // 只有用户真正展开下拉时，才计算过滤和排序后的厨具列表。
+        options = buildCollectionEquipOptions(chefItem, areaName);
+        $select.html(typeof window.getOptionsString === 'function' ? window.getOptionsString(options) : '');
+        try {
+            $select.selectpicker('refresh');
+            decorateCollectionEquipPicker($select);
+            $select.selectpicker('val', String(chefItem.equipId || ''));
+            syncCollectionEquipPickerSelection($select, String(chefItem.equipId || ''));
+        } catch (e) {}
+    }
+
+    function alignCollectionEquipSelectMenu($select) {
+        var picker = $select.data('selectpicker');
+        var $button;
+        var $menu;
+        var $container;
+        var buttonOffset;
+        var buttonWidth;
+        var menuWidth;
+        var viewportWidth;
+        var nextLeft;
+        var minLeft = 12;
+
+        if (!picker) {
+            return;
+        }
+
+        $button = picker.$button || $select.siblings('.dropdown-toggle');
+        $menu = picker.$menu || $select.parent().find('.dropdown-menu');
+        $container = picker.$bsContainer || $menu.parent('.bs-container');
+
+        if (!$button || !$button.length || !$menu || !$menu.length || !$container || !$container.length) {
+            return;
+        }
+
+        buttonOffset = $button.offset();
+        buttonWidth = $button.outerWidth();
+        menuWidth = $menu.outerWidth();
+        viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+
+        if (!buttonOffset || !buttonWidth || !menuWidth || !viewportWidth) {
+            return;
+        }
+
+        nextLeft = buttonOffset.left + (buttonWidth - menuWidth) / 2;
+        nextLeft = Math.max(minLeft, Math.min(nextLeft, viewportWidth - menuWidth - minLeft));
+
+        $container.css('left', Math.round(nextLeft) + 'px');
+    }
+
+    function resizeCollectionEquipSelectMenu($select) {
+        var picker = $select.data('selectpicker');
+        var $button;
+        var $menu;
+        var $menuInner;
+        var rect;
+        var viewportHeight;
+        var availableBelow;
+        var availableAbove;
+        var availableHeight;
+        var searchHeight;
+        var actionsHeight;
+        var doneHeight;
+        var chromeHeight;
+        var menuMaxHeight;
+        var innerMaxHeight;
+
+        if (!picker) {
+            return;
+        }
+
+        $button = picker.$button || $select.siblings('.dropdown-toggle');
+        $menu = picker.$menu || $select.parent().find('.dropdown-menu');
+        $menuInner = picker.$menuInner || (picker.$menu ? picker.$menu.children('.inner') : $());
+        if (!$button || !$button.length || !$menu || !$menu.length || !$menuInner || !$menuInner.length) {
+            return;
+        }
+
+        rect = $button[0].getBoundingClientRect ? $button[0].getBoundingClientRect() : null;
+        viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        searchHeight = $menu.find('.bs-searchbox:visible').outerHeight(true) || 0;
+        actionsHeight = $menu.find('.collection-result-equip-menu-actions:visible').outerHeight(true) || 0;
+        doneHeight = $menu.find('.bs-donebutton:visible').outerHeight(true) || 0;
+        chromeHeight = searchHeight + actionsHeight + doneHeight + 16;
+
+        if (rect && viewportHeight) {
+            availableBelow = Math.max(120, viewportHeight - rect.bottom - 12);
+            availableAbove = Math.max(120, rect.top - 12);
+            availableHeight = Math.max(availableBelow, availableAbove);
+        } else {
+            availableHeight = 420;
+        }
+
+        menuMaxHeight = Math.max(180, Math.min(420, availableHeight));
+        innerMaxHeight = Math.max(80, menuMaxHeight - chromeHeight);
+
+        $menu.css('max-height', menuMaxHeight + 'px');
+        $menuInner.css({
+            'max-height': innerMaxHeight + 'px',
+            'min-height': '0'
+        });
+    }
+
+    function calculateCollectionChefMetric(areaItem, chef) {
+        chef.__queryAreaName = areaItem.name;
+        chef.__queryMeta = getChefMaterialSkillMeta(chef);
+        chef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
+            ? window.calculateMaterialExpectation(chef, chef.equip || null, chef.disk || {})
+            : 0;
+        return getAreaQueryMetric(areaItem, chef);
+    }
+
+    function buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, equipId) {
+        var clonedChef = cloneData(baseChef);
+        var nextEquip = equipId ? getEquipById(chefPoolData.context, equipId) : null;
+        var metric;
+        var result;
+        var auraInfo;
+
+        if (equipId && !nextEquip) {
+            return null;
+        }
+
+        setChefEquip(clonedChef, nextEquip);
+        recalculateChefDataWithOptions(clonedChef, chefPoolData, {
+            equip: nextEquip,
+            applyEquip: true
+        });
+
+        if (areaItem.prefix === 'lab') {
+            autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            metric = hydrateChefMetricForArea(clonedChef, chefPoolData, areaItem.name);
+            auraInfo = checkAuraChef(clonedChef, areaItem.name, chefPoolData.context);
+            if (auraInfo.isAura && (auraInfo.auraType === areaItem.name || auraInfo.auraType === '全技法')) {
+                var auraMultiplier = auraInfo.auraScope === '场上所有厨师' ? areaItem.people : 1;
+                var totalAuraBonus = auraInfo.auraBonus * auraMultiplier;
+                metric.detailText += '（光环：' + auraInfo.auraType + '+' + auraInfo.auraBonus + ' X' + auraMultiplier + ' = ' + totalAuraBonus + '）';
+            }
+            result = buildSelectedCollectionChef({
+                chef: clonedChef,
+                rawValue: metric.rawValue,
+                label: metric.label,
+                detailText: metric.detailText,
+                expectation: metric.expectation,
+                meta: metric.meta
+            }, areaItem);
+            return enrichLabChefResult(result, clonedChef, areaItem, chefPoolData, auraInfo);
+        }
+
+        metric = calculateCollectionChefMetric(areaItem, clonedChef);
+        return buildSelectedCollectionChef({
+            chef: clonedChef,
+            rawValue: metric.rawValue,
+            label: metric.label,
+            detailText: metric.detailText,
+            expectation: metric.expectation,
+            meta: metric.meta
+        }, areaItem);
+    }
+
+    function updateAreaResultSummary(areaResult, chefPoolData) {
+        var areaItem = createAreaItemFromResult(areaResult);
+
+        if (areaResult.prefix === 'lab') {
+            areaResult.totalValue = areaResult.chefs.reduce(function(total, chef) {
+                return total + (isEmptyCollectionChef(chef) ? 0 : toInt(chef.totalContribution || chef.rawValue, 0));
+            }, 0);
+            areaResult.insufficient = getAssignedChefCount(areaResult.chefs) < areaResult.people;
+            return;
+        }
+
+        if (areaResult.prefix === 'veg' || areaResult.prefix === 'jade') {
+            areaResult.totalValue = applyAreaTeamCollectionBonus(areaResult.chefs, areaItem, chefPoolData.context).totalValue;
+            areaResult.insufficient = getAssignedChefCount(areaResult.chefs) < areaResult.people || areaResult.totalValue < areaResult.capacity;
+            return;
+        }
+
+        areaResult.totalValue = areaResult.chefs.reduce(function(total, chef) {
+            return total + (isEmptyCollectionChef(chef) ? 0 : toInt(chef.rawValue, 0));
+        }, 0);
+        areaResult.insufficient = getAssignedChefCount(areaResult.chefs) < areaResult.people || areaResult.totalValue < areaResult.capacity;
+    }
+
+    function updateCollectionChefEquip(areaName, chefId, chefName, equipId) {
+        if (state.queryLoading) {
+            return;
+        }
+        if (!state.queryResults || !state.queryResults.items) {
+            return;
+        }
+
+        var areaResult = state.queryResults.items.find(function(result) {
+            return result.areaName === areaName;
+        });
+        var chefIndex;
+        var chefPoolData;
+        var baseChef;
+        var nextChefResult;
+
+        if (!areaResult) {
+            return;
+        }
+
+        chefIndex = (areaResult.chefs || []).findIndex(function(chef) {
+            return !isEmptyCollectionChef(chef) && (String(chef.id || '') === String(chefId || '') || chef.name === chefName);
+        });
+        if (chefIndex < 0) {
+            return;
+        }
+
+        chefPoolData = buildCollectionChefPool();
+        if (chefPoolData.error) {
+            alert(chefPoolData.error);
+            return;
+        }
+        state.queryChefPool = chefPoolData;
+
+        baseChef = chefPoolData.chefs.find(function(chef) {
+            return String(chef.chefId || chef.id || '') === String(chefId || '') || chef.name === chefName;
+        });
+        if (!baseChef) {
+            alert('未找到厨师基础数据');
+            return;
+        }
+
+        nextChefResult = buildCollectionChefResultForManualEquip(baseChef, createAreaItemFromResult(areaResult), chefPoolData, String(equipId || ''));
+        if (!nextChefResult) {
+            alert('未找到对应厨具');
+            return;
+        }
+
+        areaResult.chefs[chefIndex] = nextChefResult;
+        updateAreaResultSummary(areaResult, chefPoolData);
+        render();
+    }
+
+    function amberHasLabTechniqueEffect(amber, areaName) {
+        var targetEffectType = getLabAmberEffectType(areaName);
+        if (!amber || amber.type !== 1 || amber.rarity !== 3 || !targetEffectType || !Array.isArray(amber.allEffect)) {
+            return false;
+        }
+
+        return amber.allEffect.some(function(effects) {
+            return (effects || []).some(function(effect) {
+                return effect && effect.type === targetEffectType;
+            });
+        });
+    }
+
+    function clearChefAmberSlots(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return;
+        }
+        chef.disk.ambers.forEach(function(slot) {
+            if (slot) {
+                slot.data = null;
+            }
+        });
+    }
+
+    function getChefRedAmberSlotIndices(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return [];
+        }
+        return chef.disk.ambers.reduce(function(indices, slot, index) {
+            if (slot && slot.type === 1) {
+                indices.push(index);
+            }
+            return indices;
+        }, []);
+    }
+
+    // 实验室查询未勾选“已配遗玉”时，自动给红色槽位搭配三星技法类红玉。
+    function autoApplyLabRedAmberIfNeeded(chef, chefPoolData, areaName) {
+        var redSlots;
+        var ambers;
+        var candidateAmbers;
+        var labTarget;
+        var baseValue;
+        var bestValue;
+        var bestChef;
+
+        if (chefPoolData.context.applyAmbers) {
+            return false;
+        }
+
+        if (!loadBooleanSetting('useLabAutoAmber', false)) {
+            return false;
+        }
+
+        redSlots = getChefRedAmberSlotIndices(chef);
+        if (redSlots.length === 0) {
+            return false;
+        }
+
+        ambers = getAmberListForContext(chefPoolData.context);
+        candidateAmbers = ambers.filter(function(amber) {
+            return amberHasLabTechniqueEffect(amber, areaName);
+        });
+        if (candidateAmbers.length === 0) {
+            return false;
+        }
+
+        labTarget = getLabTargetConfig(areaName);
+        baseValue = toInt(chef[labTarget.key], 0);
+        bestValue = baseValue;
+        bestChef = null;
+
+        candidateAmbers.forEach(function(amber) {
+            var trialChef = cloneData(chef);
+            clearChefAmberSlots(trialChef);
+            redSlots.forEach(function(slotIndex) {
+                trialChef.disk.ambers[slotIndex].data = amber;
+            });
+            recalculateChefData(trialChef, chefPoolData, true);
+
+            var nextValue = toInt(trialChef[labTarget.key], 0);
+            if (nextValue > bestValue) {
+                bestValue = nextValue;
+                bestChef = trialChef;
+            }
+        });
+
+        if (!bestChef) {
+            return false;
+        }
+
+        bestChef.__autoLabAmberDisp = redSlots.map(function(slotIndex) {
+            var slot = bestChef.disk && bestChef.disk.ambers ? bestChef.disk.ambers[slotIndex] : null;
+            return slot && slot.data && slot.data.name ? slot.data.name : '';
+        }).filter(function(name) {
+            return !!name;
+        }).join('/');
+
+        Object.assign(chef, bestChef);
+        return true;
     }
 
     // 汇总厨师素材相关元数据：
@@ -1959,7 +2897,9 @@
             hasOpeningTimeSkill: hasOpeningTimeSkill,
             redAmberCount: chef.disk && Array.isArray(chef.disk.ambers) ? chef.disk.ambers.filter(function(slot) {
                 return slot && slot.type === 1 && slot.data;
-            }).length : 0
+            }).length : 0,
+            redAmberSlotCount: getRedAmberSlotCountFromChef(chef),
+            redAmberSummary: getRedAmberSummaryFromChef(chef)
         };
     }
 
@@ -2147,6 +3087,28 @@
             selected: selected,
             totalValue: totalValue
         };
+    }
+
+    function getCollectionBonusValueForKey(bonusInfo, key) {
+        if (key === 'meatVal') {
+            return toInt(bonusInfo.meat, 0);
+        }
+        if (key === 'fishVal') {
+            return toInt(bonusInfo.fish, 0);
+        }
+        if (key === 'vegVal') {
+            return toInt(bonusInfo.veg, 0);
+        }
+        if (key === 'creationVal') {
+            return toInt(bonusInfo.creation, 0);
+        }
+        return 0;
+    }
+
+    function getCollectionBonusValueForKeys(bonusInfo, keys) {
+        return (keys || []).reduce(function(total, key) {
+            return total + getCollectionBonusValueForKey(bonusInfo, key);
+        }, 0);
     }
 
     // 判断厨师是否“已拥有”（支持本地标记与规则数据混用）。
@@ -2464,7 +3426,7 @@
     // expectation/meta: 采集期望与素材元数据
     function getAreaQueryMetric(areaItem, chef) {
         var rawValue = 0;
-        var meta = chef.__queryMeta || { materialGain: 0, critMaterial: 0, critChance: 0, redAmberCount: 0 };
+        var meta = chef.__queryMeta || { materialGain: 0, critMaterial: 0, critChance: 0, redAmberCount: 0, redAmberSlotCount: 0 };
         var score = 0;
         var detailText = '';
         var label = '';
@@ -2618,6 +3580,10 @@
             critMaterial: meta.critMaterial || 0,
             critChance: meta.critChance || 0,
             redAmberCount: meta.redAmberCount || 0,
+            redAmberSlotCount: meta.redAmberSlotCount || 0,
+            redAmberSummary: meta.redAmberSummary || '',
+            equipId: String(chef.equipId || ''),
+            equipName: chef.equip ? (chef.equip.name || chef.equip.disp || '') : '',
             detailText: item.detailText,
             valueLabel: item.label,
             rawValue: item.rawValue,
@@ -2657,7 +3623,7 @@
             var clonedChef = cloneData(chef);
 
             // 应用银布鞋配置
-            var equipChanged = applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'jade');
+            var equipChanged = applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'jade', areaItem.name);
             if (equipChanged) {
                 // 重新计算厨师数据
                 recalculateChefData(clonedChef, chefPoolData);
@@ -2700,15 +3666,25 @@
         });
 
 
-        // 对匹配的厨师计算指标并排序
+        // 对匹配的厨师计算指标并排序。
+        // 玉片区最终总采集点 = 所选厨师基础双采集值之和 + 人数 * 团队双采集加成之和，
+        // 因此单个厨师的选人贡献可线性展开为：
+        // 基础双采集值 + 人数 * 该厨师对目标双采集维度提供的团队加成。
         var candidates = matchedChefs.map(function(chef) {
             var metric = getAreaQueryMetric(areaItem, chef);
+            var chefBonus = calculateChefGlobalCollectionBonus(chef, chefPoolData.context);
+            var teamBonusContribution = getCollectionBonusValueForKeys(chefBonus, requiredKeys);
             return $.extend({
-                chef: chef
+                chef: chef,
+                teamBonusContribution: teamBonusContribution,
+                adjustedSelectionValue: metric.rawValue + areaItem.people * teamBonusContribution
             }, metric);
         }).filter(function(item) {
             return item.rawValue > 0;
         }).sort(function(left, right) {
+            if (right.adjustedSelectionValue !== left.adjustedSelectionValue) {
+                return right.adjustedSelectionValue - left.adjustedSelectionValue;
+            }
             if (right.score !== left.score) {
                 return right.score - left.score;
             }
@@ -2747,6 +3723,8 @@
                 recalculateChefData(clonedChef, chefPoolData);
             }
 
+            autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+
             // 重新计算材料技能元数据，确保和当前地区一致
             clonedChef.__queryAreaName = areaItem.name;
             clonedChef.__queryMeta = getChefMaterialSkillMeta(clonedChef);
@@ -2764,6 +3742,9 @@
                 var auraMultiplier = auraInfo.auraScope === '场上所有厨师' ? areaItem.people : 1;
                 var totalAuraBonus = auraInfo.auraBonus * auraMultiplier;
                 metric.detailText += '（光环：' + auraInfo.auraType + '+' + auraInfo.auraBonus + ' X' + auraMultiplier + ' = ' + totalAuraBonus + '）';
+            }
+            if (clonedChef.__autoLabAmberDisp) {
+                metric.detailText += '（自动红玉：' + clonedChef.__autoLabAmberDisp + '）';
             }
 
             // 用克隆后的数据更新原始厨师
@@ -2802,10 +3783,7 @@
 
         var selected = candidates.slice(0, areaItem.people).map(function(item) {
             var result = buildSelectedCollectionChef(item, areaItem);
-            // 保存总贡献值（用于计算总技法值）
-            result.totalContribution = item.totalContribution;
-            result.auraInfo = item.auraInfo;
-            return result;
+            return enrichLabChefResult(result, item.chef, areaItem, chefPoolData, item.auraInfo);
         });
 
         var totalValue = selected.reduce(function(total, item) {
@@ -2831,7 +3809,7 @@
             clonedChef.__originalEquipDisp = chef.__originalEquipDisp;
 
             // 应用银布鞋配置
-            var equipChanged = applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'veg');
+            var equipChanged = applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'veg', areaItem.name);
             // 统一重算，确保银布鞋与心法盘加成统计一致
             if (equipChanged) {
                 // 重新计算厨师数据（包括修炼技能）
@@ -2990,6 +3968,7 @@
         var rarityHtml = getCombinationStarsHtml(item.rarity);
         var metaHtml = [];
         var secondRowHtml = [];
+        var headExtraHtml = '';
 
         function buildCollectionTeamBonusText() {
             var groupedBonusMap = {};
@@ -3024,8 +4003,10 @@
         if (item.prefix === 'lab') {
             // 实验室：第二行显示技法值和红色心法盘
             var auraContribution = Math.max(0, toInt((item.totalContribution || item.rawValue), 0) - toInt(item.rawValue, 0));
+            headExtraHtml = '<span class="collection-result-chef-red-amber-inline">红色心法盘*' + toInt(item.redAmberSlotCount, 0) + '</span>';
             metaHtml.push('<span class="collection-result-chef-meta-item is-lab-value">' + escapeHtml(item.valueLabel) + ' <span class="collection-result-chef-value-number">' + item.rawValue + '</span></span>');
-            metaHtml.push('<span class="collection-result-chef-meta-item is-red-amber">红色心法盘 ' + item.redAmberCount + '</span>');
+            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
+            metaHtml.push('<span class="collection-result-chef-meta-item is-red-amber">' + escapeHtml(item.redAmberSummary || '无红色心法盘') + '</span>');
 
             if (auraContribution > 0) {
                 var auraText = '光环加成 +' + auraContribution;
@@ -3036,13 +4017,14 @@
                 secondRowHtml.push('<span class="collection-result-chef-meta-item is-aura">' + escapeHtml(auraText) + '</span>');
             }
         } else if (item.prefix === 'veg') {
-            // 菜地区域：第二行显示所有采集点和采集期望值
+            // 菜地区域：第一行显示采集期望值，第二行显示采集点和厨具
             var collectionItems = [
                 { label: '肉', value: item.meatVal, key: 'meat' },
                 { label: '鱼', value: item.fishVal, key: 'fish' },
                 { label: '菜', value: item.vegVal, key: 'veg' },
                 { label: '面', value: item.creationVal, key: 'creation' }
             ];
+            headExtraHtml = '<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>';
             
             // 判断当前地区对应的采集类型
             var currentKey = '';
@@ -3061,8 +4043,7 @@
                 var className = isHighlight ? 'collection-result-chef-meta-item is-collection-highlight' : 'collection-result-chef-meta-item is-collection-normal';
                 metaHtml.push('<span class="' + className + '">' + collItem.label + ' ' + collItem.value + '</span>');
             });
-            
-            metaHtml.push('<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>');
+            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
             
             // 第三行：素材、暴击素材、暴击率
             var teamBonusText = buildCollectionTeamBonusText();
@@ -3073,8 +4054,9 @@
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-material">暴击素材 ' + item.critMaterial + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-chance">暴击率 ' + item.critChance + '%</span>');
         } else {
-            // 玉片区：第二行显示采集点和采集期望值
+            // 玉片区：第二行显示采集点、厨具和采集期望值
             metaHtml.push('<span class="collection-result-chef-meta-item is-jade-value">' + escapeHtml(item.valueLabel) + ' <span class="collection-result-chef-value-number">' + item.rawValue + '</span></span>');
+            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
             metaHtml.push('<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>');
             
             // 第三行：素材、暴击素材、暴击率
@@ -3098,6 +4080,7 @@
                     '<div class="collection-result-chef-head-left">',
                         '<span class="collection-result-chef-name">', escapeHtml(item.name), '</span>',
                         rarityHtml ? '<span class="collection-result-chef-stars">' + rarityHtml + '</span>' : '',
+                        headExtraHtml,
                     '</div>',
                     '<div class="collection-result-chef-head-right">',
                         '<button class="collection-result-chef-replace-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '">替换</button>',
@@ -3117,6 +4100,10 @@
         var areaNameColor = getCollectionAreaNameColor(result.areaName, result.prefix);
         var areaNameStyle = areaNameColor ? (' style="color:' + areaNameColor + ';"') : '';
         var cardStyle = areaNameColor ? (' style="border-top-color:' + areaNameColor + ';"') : '';
+        var isCollapsed = isCollectionResultAreaCollapsed(result.areaName);
+        var cardClass = isCollapsed ? ' is-collapsed' : '';
+        var iconClass = isCollapsed ? 'glyphicon-chevron-down' : 'glyphicon-chevron-up';
+        var chefListStyle = isCollapsed ? ' style="display:none;"' : '';
 
         summaryHtml.push('<span class="collection-result-summary-pill">人数 ' + getAssignedChefCount(result.chefs) + '/' + result.people + '</span>');
         if (result.prefix === 'lab') {
@@ -3132,7 +4119,7 @@
         }
 
         return [
-            '<div class="collection-result-card collection-result-card-', escapeHtml(result.prefix), '" data-area-name="', escapeHtml(result.areaName), '"' + cardStyle + '>',
+            '<div class="collection-result-card collection-result-card-', escapeHtml(result.prefix), cardClass, '" data-area-name="', escapeHtml(result.areaName), '"' + cardStyle + '>',
                 '<div class="collection-result-card-head">',
                     '<div class="collection-result-card-title-wrap">',
                         '<div class="collection-result-card-title">',
@@ -3143,11 +4130,11 @@
                     '<div class="collection-result-card-actions">',
                         '<button class="collection-result-save-btn" data-area-name="' + escapeHtml(result.areaName) + '" data-area-prefix="' + escapeHtml(result.prefix) + '">保存组合</button>',
                         '<button class="collection-result-toggle-btn" data-area-name="' + escapeHtml(result.areaName) + '">',
-                            '<span class="glyphicon glyphicon-chevron-up"></span>',
+                            '<span class="glyphicon ', iconClass, '"></span>',
                         '</button>',
                     '</div>',
                 '</div>',
-                '<div class="collection-result-chef-list">', chefsHtml, '</div>',
+                '<div class="collection-result-chef-list"', chefListStyle, '>', chefsHtml, '</div>',
             '</div>'
         ].join('');
     }
@@ -3395,6 +4382,7 @@
             if (chefPoolData.error) {
                 state.queryLoading = false;
                 state.queryResults = null;
+                state.queryChefPool = null;
                 render();
                 showPlaceholder('查询失败', chefPoolData.error);
                 return;
@@ -3407,6 +4395,7 @@
             if (!areaItems.length) {
                 state.queryLoading = false;
                 state.queryResults = null;
+                state.queryChefPool = null;
                 render();
                 showPlaceholder('查询失败', '请先开启至少一个区域并设置人数');
                 return;
@@ -3415,11 +4404,13 @@
             if (!chefPoolData.chefs.length) {
                 state.queryLoading = false;
                 state.queryResults = null;
+                state.queryChefPool = null;
                 render();
                 showPlaceholder('查询失败', '当前没有可参与查询的厨师');
                 return;
             }
 
+            state.queryChefPool = chefPoolData;
             state.queryResults = executeCollectionQuery(areaItems, chefPoolData);
             state.queryLoading = false;
             if (state.queryResults.groupOrder.length) {
@@ -3450,6 +4441,8 @@
         var $root = ensureRoot();
         var caretClass = state.settingsExpanded ? 'glyphicon-chevron-up' : 'glyphicon-chevron-down';
         var settingsBodyClass = state.settingsExpanded ? '' : ' hidden';
+
+        cleanupCollectionEquipPickers();
 
         var html = [
             '<div class="collection-shell">',
@@ -3491,6 +4484,7 @@
         ].join('');
 
         $root.html(html).removeClass('hidden');
+        initializeCollectionEquipPickers();
     }
 
     // 统一错误提示出口。
@@ -3499,6 +4493,17 @@
             window.showAlert(message, title);
         } else {
             window.alert(message);
+        }
+    }
+
+    function ensureOnlyOwnedChecked() {
+        var $got = $('#chk-cal-got');
+        if (!$got.length || $got.prop('checked')) {
+            return;
+        }
+        $got.prop('checked', true).trigger('change');
+        if (typeof window.changeCheckStyle === 'function' && $got[0]) {
+            window.changeCheckStyle($got[0]);
         }
     }
 
@@ -3514,7 +4519,9 @@
         if (forceRefresh) {
             state.queryLoading = false;
             state.queryResults = null;
+            state.queryChefPool = null;
             state.activePreviewGroup = 'veg';
+            state.collapsedResultAreas = {};
             state.sortCache = null;
         }
         state.settingsExpanded = true;
@@ -3537,6 +4544,7 @@
         $('#banquet-progress-wrapper').addClass('hidden');
         $('#competition-progress-wrapper').addClass('hidden');
 
+        ensureOnlyOwnedChecked();
         render();
         activateRulesPane();
 
@@ -3588,6 +4596,110 @@
         showReplaceChefDialog(areaName, '');
     });
 
+    $(document).on('show.bs.select', '#collection-team-root .collection-result-equip-select', function() {
+        if (state.queryLoading || !state.queryResults || !state.queryResults.items) {
+            return;
+        }
+        populateCollectionEquipSelect($(this));
+    });
+
+    $(document).on('shown.bs.select', '#collection-team-root .collection-result-equip-select', function() {
+        var $select = $(this);
+        window.requestAnimationFrame(function() {
+            resizeCollectionEquipSelectMenu($select);
+            alignCollectionEquipSelectMenu($select);
+            syncCollectionEquipPickerSelection($select);
+            window.setTimeout(function() {
+                alignCollectionEquipSelectMenu($select);
+                syncCollectionEquipPickerSelection($select);
+            }, 0);
+            window.setTimeout(function() {
+                alignCollectionEquipSelectMenu($select);
+                syncCollectionEquipPickerSelection($select);
+            }, 30);
+        });
+    });
+
+    $(document).on('changed.bs.select', '#collection-team-root .collection-result-equip-select', function(e, clickedIndex, isSelected, previousValue) {
+        var $select = $(this);
+        var areaName = $select.data('area-name');
+        var chefId = $select.data('chef-id');
+        var chefName = $select.data('chef-name');
+        var option;
+        var selectedValue;
+        var picker;
+
+        // 程序触发的 refresh/val 不处理，只响应用户真实点击的选项。
+        if (clickedIndex === null || clickedIndex === undefined || clickedIndex < 0 || !isSelected) {
+            return;
+        }
+        if (state.queryLoading) {
+            return;
+        }
+        option = this.options && this.options[clickedIndex] ? this.options[clickedIndex] : null;
+        selectedValue = option ? String(option.value || '') : String($select.val() || '');
+        if (String(selectedValue || '') === '__collection_current_none__') {
+            selectedValue = '';
+        }
+        if (String(previousValue || '') === String(selectedValue || '')) {
+            return;
+        }
+
+        picker = $select.data('selectpicker');
+        try {
+            if (picker && picker.$bsContainer && picker.$bsContainer.length) {
+                picker.$bsContainer.remove();
+            }
+            if ($select.data('selectpicker')) {
+                $select.selectpicker('destroy');
+            }
+        } catch (err) {}
+
+        updateCollectionChefEquip(
+            areaName,
+            chefId,
+            chefName,
+            selectedValue
+        );
+    });
+
+    $(document).on('click', '.collection-result-equip-clear-btn', function(e) {
+        var $button = $(this);
+        var $menu = $button.closest('.collection-result-equip-menu');
+        var $container = $menu.parent('.collection-result-equip-menu-container');
+        var $select = $('#collection-team-root .collection-result-equip-select').filter(function() {
+            var picker = $(this).data('selectpicker');
+            return !!(picker && picker.$bsContainer && picker.$bsContainer.length && $container.length && picker.$bsContainer[0] === $container[0]);
+        }).first();
+        var areaName;
+        var chefId;
+        var chefName;
+        var picker;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!$select.length || $button.prop('disabled') || state.queryLoading) {
+            return;
+        }
+
+        areaName = $select.data('area-name');
+        chefId = $select.data('chef-id');
+        chefName = $select.data('chef-name');
+        picker = $select.data('selectpicker');
+
+        try {
+            if (picker && picker.$bsContainer && picker.$bsContainer.length) {
+                picker.$bsContainer.remove();
+            }
+            if ($select.data('selectpicker')) {
+                $select.selectpicker('destroy');
+            }
+        } catch (err) {}
+
+        updateCollectionChefEquip(areaName, chefId, chefName, '');
+    });
+
     $(document).on('click', '.collection-result-save-btn', function(e) {
         e.stopPropagation();
         var areaName = $(this).data('area-name');
@@ -3597,18 +4709,27 @@
 
     $(document).on('click', '.collection-result-toggle-btn', function(e) {
         e.stopPropagation();
+        this.blur();
         var $card = $(this).closest('.collection-result-card');
         var $chefList = $card.find('.collection-result-chef-list');
         var $icon = $(this).find('.glyphicon');
+        var areaName = $(this).data('area-name');
         
         if ($card.hasClass('is-collapsed')) {
             $card.removeClass('is-collapsed');
             $chefList.slideDown(200);
             $icon.removeClass('glyphicon-chevron-down').addClass('glyphicon-chevron-up');
+            if (state.collapsedResultAreas) {
+                delete state.collapsedResultAreas[areaName];
+            }
         } else {
             $card.addClass('is-collapsed');
             $chefList.slideUp(200);
             $icon.removeClass('glyphicon-chevron-up').addClass('glyphicon-chevron-down');
+            if (!state.collapsedResultAreas) {
+                state.collapsedResultAreas = {};
+            }
+            state.collapsedResultAreas[areaName] = true;
         }
     });
 
@@ -3762,9 +4883,9 @@
             if (areaItem.prefix === 'lab') {
                 applyLabEquipIfNeeded(clonedChef, chefPoolData.context, areaItem.name);
             } else if (areaItem.prefix === 'jade') {
-                applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'jade');
+                applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'jade', areaItem.name);
             } else if (areaItem.prefix === 'veg') {
-                applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'veg');
+                applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'veg', areaItem.name);
             }
 
             recalculateChefData(clonedChef, chefPoolData);
@@ -3942,6 +5063,7 @@
             alert(chefPoolData.error);
             return;
         }
+        state.queryChefPool = chefPoolData;
         var newChef = chefPoolData.chefs.find(function(chef) {
             return chef.name === newChefName;
         });
@@ -3963,12 +5085,15 @@
         if (areaItem.prefix === 'lab') {
             applyLabEquipIfNeeded(clonedChef, chefPoolData.context, areaItem.name);
         } else if (areaItem.prefix === 'jade') {
-            applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'jade');
+            applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'jade', areaItem.name);
         } else if (areaItem.prefix === 'veg') {
-            applySilverShoesIfNeeded(clonedChef, chefPoolData.context, 'veg');
+            applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'veg', areaItem.name);
         }
 
         recalculateChefData(clonedChef, chefPoolData);
+        if (areaItem.prefix === 'lab') {
+            autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+        }
         clonedChef.__queryAreaName = areaItem.name;
         clonedChef.__queryMeta = getChefMaterialSkillMeta(clonedChef);
         clonedChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
@@ -3978,8 +5103,9 @@
         var metric = getAreaQueryMetric(areaItem, clonedChef);
 
         // 如果是实验室区域，检查光环
+        var auraInfo = null;
         if (areaItem.prefix === 'lab') {
-            var auraInfo = checkAuraChef(clonedChef, areaItem.name, chefPoolData.context);
+            auraInfo = checkAuraChef(clonedChef, areaItem.name, chefPoolData.context);
 
             if (auraInfo.isAura && (auraInfo.auraType === areaItem.name || auraInfo.auraType === '全技法')) {
                 var auraMultiplier = auraInfo.auraScope === '场上所有厨师' ? areaItem.people : 1;
@@ -3996,6 +5122,9 @@
             expectation: metric.expectation,
             meta: metric.meta
         }, areaItem);
+        if (areaItem.prefix === 'lab') {
+            newChefResult = enrichLabChefResult(newChefResult, clonedChef, areaItem, chefPoolData, auraInfo);
+        }
 
         var sourceAreaResult = null;
         var sourceChefIndex = -1;
@@ -4024,45 +5153,9 @@
 
         // 重新计算总值
         if (areaItem.prefix === 'lab') {
-            // 实验室需要重新计算光环加成
-            var totalValue = 0;
-            areaResult.chefs.forEach(function(chef) {
-                var chefData;
-                var clonedLabChef;
-                var auraInfo;
-                var contribution;
-
-                if (isEmptyCollectionChef(chef)) {
-                    return;
-                }
-
-                chefData = chefPoolData.chefs.find(function(c) {
-                    return c.name === chef.name;
-                });
-                if (!chefData) {
-                    return;
-                }
-
-                clonedLabChef = cloneData(chefData);
-                applyLabEquipIfNeeded(clonedLabChef, chefPoolData.context, areaItem.name);
-                recalculateChefData(clonedLabChef, chefPoolData);
-                clonedLabChef.__queryAreaName = areaItem.name;
-                clonedLabChef.__queryMeta = getChefMaterialSkillMeta(clonedLabChef);
-                clonedLabChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
-                    ? window.calculateMaterialExpectation(clonedLabChef, clonedLabChef.equip || null, clonedLabChef.disk || {})
-                    : 0;
-
-                auraInfo = checkAuraChef(clonedLabChef, areaItem.name, chefPoolData.context);
-                contribution = chef.rawValue;
-
-                if (auraInfo.isAura && (auraInfo.auraType === areaItem.name || auraInfo.auraType === '全技法')) {
-                    var auraMultiplier = auraInfo.auraScope === '场上所有厨师' ? areaItem.people : 1;
-                    contribution += auraInfo.auraBonus * auraMultiplier;
-                }
-
-                totalValue += contribution;
-            });
-            areaResult.totalValue = totalValue;
+            areaResult.totalValue = areaResult.chefs.reduce(function(total, chef) {
+                return total + (isEmptyCollectionChef(chef) ? 0 : toInt(chef.totalContribution || chef.rawValue, 0));
+            }, 0);
         } else if (areaItem.prefix === 'veg' || areaItem.prefix === 'jade') {
             areaResult.totalValue = applyAreaTeamCollectionBonus(areaResult.chefs, areaItem, chefPoolData.context).totalValue;
         } else {
@@ -4073,43 +5166,9 @@
 
         if (sourceAreaResult) {
             if (sourceAreaResult.prefix === 'lab') {
-                var sourceLabTotal = 0;
-                sourceAreaResult.chefs.forEach(function(chef) {
-                    var chefData;
-                    var clonedSourceChef;
-                    var sourceAuraInfo;
-                    var sourceContribution;
-
-                    if (isEmptyCollectionChef(chef)) {
-                        return;
-                    }
-
-                    chefData = chefPoolData.chefs.find(function(c) {
-                        return c.name === chef.name;
-                    });
-                    if (!chefData) {
-                        return;
-                    }
-
-                    clonedSourceChef = cloneData(chefData);
-                    applyLabEquipIfNeeded(clonedSourceChef, chefPoolData.context, sourceAreaResult.areaName);
-                    recalculateChefData(clonedSourceChef, chefPoolData);
-                    clonedSourceChef.__queryAreaName = sourceAreaResult.areaName;
-                    clonedSourceChef.__queryMeta = getChefMaterialSkillMeta(clonedSourceChef);
-                    clonedSourceChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
-                        ? window.calculateMaterialExpectation(clonedSourceChef, clonedSourceChef.equip || null, clonedSourceChef.disk || {})
-                        : 0;
-
-                    sourceAuraInfo = checkAuraChef(clonedSourceChef, sourceAreaResult.areaName, chefPoolData.context);
-                    sourceContribution = chef.rawValue;
-                    if (sourceAuraInfo.isAura && (sourceAuraInfo.auraType === sourceAreaResult.areaName || sourceAuraInfo.auraType === '全技法')) {
-                        var sourceAuraMultiplier = sourceAuraInfo.auraScope === '场上所有厨师' ? sourceAreaResult.people : 1;
-                        sourceContribution += sourceAuraInfo.auraBonus * sourceAuraMultiplier;
-                    }
-
-                    sourceLabTotal += sourceContribution;
-                });
-                sourceAreaResult.totalValue = sourceLabTotal;
+                sourceAreaResult.totalValue = sourceAreaResult.chefs.reduce(function(total, chef) {
+                    return total + (isEmptyCollectionChef(chef) ? 0 : toInt(chef.totalContribution || chef.rawValue, 0));
+                }, 0);
             } else if (sourceAreaResult.prefix === 'veg' || sourceAreaResult.prefix === 'jade') {
                 sourceAreaResult.totalValue = applyAreaTeamCollectionBonus(sourceAreaResult.chefs, {
                     name: sourceAreaResult.areaName,
@@ -4207,6 +5266,7 @@
     // 菜地区配置面板。
     function getVegConfigPanel() {
         var useSilverShoes = loadBooleanSetting('useSilverShoes', false);
+        var useGoldenSilkBoots = loadBooleanSetting('useGoldenSilkBoots', false);
 
         return [
             '<div class="config-panel">',
@@ -4217,7 +5277,16 @@
                             '<span class="config-title">是否默认使用银布鞋</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，厨师厨具效率低于银布鞋的都会替换为银布鞋查询</div>',
+                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于银布鞋时，替换为银布鞋查询（默认期望值按 4 计算）</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useGoldenSilkBoots"', useGoldenSilkBoots ? ' checked' : '', '>',
+                            '<span class="config-title">是否默认使用金丝筒靴</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于金丝筒靴时，替换为金丝筒靴查询（默认期望值按 8 计算）</div>',
                 '</div>',
             '</div>'
         ].join('');
@@ -4226,6 +5295,7 @@
     // 玉片区配置面板。
     function getJadeConfigPanel() {
         var useJadeSilverShoes = loadBooleanSetting('useJadeSilverShoes', false);
+        var useJadeGoldenSilkBoots = loadBooleanSetting('useJadeGoldenSilkBoots', false);
 
         return [
             '<div class="config-panel">',
@@ -4236,7 +5306,16 @@
                             '<span class="config-title">是否默认使用银布鞋</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，厨师厨具效率低于银布鞋的都会替换为银布鞋查询</div>',
+                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于银布鞋时，替换为银布鞋查询（默认期望值按 4 计算）</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useJadeGoldenSilkBoots"', useJadeGoldenSilkBoots ? ' checked' : '', '>',
+                            '<span class="config-title">是否默认使用金丝筒靴</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于金丝筒靴时，替换为金丝筒靴查询（默认期望值按 8 计算）</div>',
                 '</div>',
             '</div>'
         ].join('');
@@ -4246,6 +5325,7 @@
     function getLabConfigPanel() {
         var useLabEquip150 = loadBooleanSetting('useLabEquip150', false);
         var useBeginnerEquip100 = loadBooleanSetting('useBeginnerEquip100', false);
+        var useLabAutoAmber = loadBooleanSetting('useLabAutoAmber', false);
 
         return [
             '<div class="config-panel">',
@@ -4266,6 +5346,15 @@
                         '</label>',
                     '</div>',
                     '<div class="config-item-desc">开启后，默认使用100技法厨具</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useLabAutoAmber"', useLabAutoAmber ? ' checked' : '', '>',
+                            '<span class="config-title">未勾选已配遗玉时自动搭配红色遗玉</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">开启后，实验室查询在未勾选已配遗玉时，会自动搭配技法加成类的三星红色遗玉</div>',
                 '</div>',
             '</div>'
         ].join('');

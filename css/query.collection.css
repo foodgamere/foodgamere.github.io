@@ -276,6 +276,7 @@
 
 .collection-result-card-lab {
     border-top-color: #4a90d9;
+    overflow: visible;
 }
 
 .collection-result-card-cond {
@@ -396,6 +397,8 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    user-select: none;
+    caret-color: transparent;
 }
 
 .collection-result-toggle-btn:hover {
@@ -406,6 +409,12 @@
 
 .collection-result-toggle-btn:active {
     background: #e8f0f8;
+}
+
+.collection-result-toggle-btn:focus,
+.collection-result-toggle-btn:focus-visible {
+    outline: none;
+    box-shadow: none;
 }
 
 .collection-result-toggle-btn .glyphicon {
@@ -453,10 +462,18 @@
 
 .collection-result-chef-card {
     min-width: 0;
+    position: relative;
     padding: 10px 12px;
     border-radius: 8px;
     background: #f9fbfd;
     border: 1px solid #e8edf3;
+}
+
+.collection-result-card-lab .collection-result-chef-list,
+.collection-result-card-lab .collection-result-chef-card,
+.collection-result-card-lab .collection-result-chef-meta,
+.collection-result-card-lab .collection-result-chef-meta-item.is-lab-equip {
+    overflow: visible;
 }
 
 .collection-result-chef-card.is-empty {
@@ -841,6 +858,178 @@
     background: #f3e5f5;
     color: #7b1fa2;
     font-weight: 600;
+}
+
+.collection-result-equip-select-wrap {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select {
+    width: auto !important;
+    max-width: 100%;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle {
+    height: 22px;
+    min-height: 22px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0 16px 0 8px;
+    border-radius: 12px;
+    border: 1px solid #d8e2ea;
+    background: #f8fafc;
+    color: #22313f;
+    font-size: 10px;
+    line-height: 20px;
+    box-shadow: none;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select.open > .dropdown-toggle,
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle:focus,
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle:hover {
+    border-color: #90caf9;
+    background: #eef6ff;
+    color: #1f5f96;
+    outline: none !important;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .filter-option {
+    display: flex !important;
+    align-items: center;
+    height: 100%;
+    padding: 0;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .filter-option-inner {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    max-width: 100%;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .filter-option-inner-inner {
+    display: block;
+    color: #22313f;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.2;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select .caret {
+    right: 5px;
+}
+
+.collection-result-equip-menu {
+    min-width: 232px;
+    max-width: min(380px, calc(100vw - 24px));
+    overflow: hidden;
+}
+
+.collection-result-equip-menu-inner {
+    overflow-x: auto !important;
+    overflow-y: auto !important;
+}
+
+.collection-result-equip-menu .bs-searchbox,
+.collection-result-equip-menu .bs-donebutton {
+    background: #fff;
+    z-index: 1;
+}
+
+.collection-result-equip-menu-actions {
+    padding: 0 8px 6px;
+    background: #fff;
+}
+
+.collection-result-equip-clear-btn {
+    width: 100%;
+    min-height: 34px;
+    padding: 6px 12px;
+    text-align: center;
+}
+
+.collection-result-equip-clear-btn:hover,
+.collection-result-equip-clear-btn:focus {
+    outline: none;
+}
+
+.collection-result-equip-clear-btn.is-disabled,
+.collection-result-equip-clear-btn[disabled] {
+    cursor: default;
+}
+
+.collection-result-equip-menu .bs-donebutton {
+    position: sticky;
+    bottom: 0;
+    border-top: 1px solid #e6edf3;
+}
+
+.collection-result-equip-menu li a {
+    overflow: visible;
+}
+
+.collection-result-equip-menu li.active:not(.selected) > a,
+.collection-result-equip-menu li.active:not(.selected) > a:hover,
+.collection-result-equip-menu li.active:not(.selected) > a:focus {
+    background: #fff;
+    color: inherit;
+}
+
+.collection-result-equip-menu li a .text {
+    display: inline-block;
+    min-width: max-content;
+    overflow: visible;
+    -webkit-overflow-scrolling: touch;
+}
+
+.collection-result-equip-option {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 2px 0;
+    min-width: max-content;
+    white-space: nowrap;
+}
+
+.collection-result-equip-option-name {
+    display: inline-block;
+    color: #22313f;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.collection-result-equip-option-skill,
+.collection-result-equip-option-origin {
+    display: inline-block;
+    color: #7b8794;
+    font-size: 11px;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .collection-result-equip-option {
+    display: inline-flex;
+    align-items: center;
+    padding: 0;
+    min-height: 100%;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .collection-result-equip-option-skill,
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .collection-result-equip-option-origin {
+    display: none;
+}
+
+.collection-result-equip-select-wrap .bootstrap-select > .dropdown-toggle .collection-result-equip-option-name {
+    line-height: 1;
+}
+
+.collection-result-chef-card {
+    position: relative;
 }
 
 .collection-sort-modal .modal-dialog {
@@ -1711,6 +1900,9 @@
         width: auto;
         font-size: 11px;
     }
+
+    .collection-result-equip-select-wrap {
+        max-width: 100%;
     }
 
     .collection-result-chef-replace-btn {
