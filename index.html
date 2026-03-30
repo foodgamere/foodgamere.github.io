@@ -17,6 +17,7 @@
     <script type="text/javascript" src="js/query.collection.js?v=1"></script>
     <script type="text/javascript" src="js/banquet.optimizer.js?v=1"></script>
     <script type="text/javascript" src="js/jianghu.optimizer.js?v=1"></script>
+    <script type="text/javascript" src="js/competition.optimizer.simple.js?v=1"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=173" />
     <link rel="stylesheet" type="text/css" href="css/query.collection.css?v=1" />
     <script>
@@ -2202,15 +2203,15 @@
                                     data-none-selected-text="厨师组合" data-none-results-text="无">
                                 </select>
                             </div>
-                            <div class="select-wrapper chushen-only" style="display: inline-block; margin-right: 5px;">
+                            <div class="select-wrapper" style="display: inline-block; margin-right: 5px;">
                                 <select id="select-competition-tier" class="selectpicker" data-width="auto" data-style="btn-default">
                                     <option value="-1">不限制分数</option>
                                 </select>
                             </div>
-                            <button id="btn-competition-auto" class="btn btn-primary chushen-only" type="button">
+                            <button id="btn-competition-auto" class="btn btn-primary" type="button">
                                 自动计算
                             </button>
-                            <button id="btn-competition-settings" class="btn btn-default btn-sm chushen-only" type="button" style="display: inline-block; margin-left: 3px; vertical-align: top; margin-top: 1px;" title="算法设置">
+                            <button id="btn-competition-settings" class="btn btn-default btn-sm" type="button" style="display: inline-block; margin-left: 3px; vertical-align: top; margin-top: 1px;" title="算法设置">
                                 <span class="glyphicon glyphicon-cog"></span>
                             </button>
                         </div>
@@ -3126,6 +3127,7 @@
     var STORAGE_LIST_KEY = 'competition_algorithm_list';
     var STORAGE_ACTIVE_KEY = 'competition_algorithm_active';
     var STORAGE_AUTO_CONDIMENT_KEY = 'competition_auto_condiment';
+    var STORAGE_DEFAULT_NEWBIE_EQUIP_KEY = 'competition_default_newbie_equip';
     var algorithmList = [];
     var activeAlgorithmId = null;
 
@@ -3134,12 +3136,18 @@
         return urlParams.get('chushen') === '123';
     }
 
+    function isDefaultCompetitionMode() {
+        return !checkChushenParam();
+    }
+
     function initDisplayControl() {
         var isChushenMode = checkChushenParam();
         if (!isChushenMode) {
             $('.chushen-only').hide();
+            $('#btn-competition-settings').show().attr('title', '设置');
         } else {
             $('.chushen-only').show();
+            $('#btn-competition-settings').show().attr('title', '设置');
         }
     }
 
@@ -3220,8 +3228,14 @@
         localStorage.setItem(STORAGE_ACTIVE_KEY, id);
         var code = getAlgorithmCode(id);
         if (code) {
-            executeAlgorithm(code);
+            if (executeAlgorithm(code)) {
+                return true;
+            }
         }
+        activeAlgorithmId = null;
+        localStorage.removeItem(STORAGE_ACTIVE_KEY);
+        restoreDefaultAlgorithm();
+        return false;
     }
 
     function getAutoCondimentEnabled() {
@@ -3239,6 +3253,42 @@
             localStorage.setItem(STORAGE_AUTO_CONDIMENT_KEY, enabled ? '1' : '0');
         } catch (e) {}
     }
+
+    function getDefaultNewbieEquipEnabled() {
+        try {
+            return localStorage.getItem(STORAGE_DEFAULT_NEWBIE_EQUIP_KEY) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function setDefaultNewbieEquipEnabled(enabled) {
+        try {
+            localStorage.setItem(STORAGE_DEFAULT_NEWBIE_EQUIP_KEY, enabled ? '1' : '0');
+        } catch (e) {}
+    }
+
+    function restoreDefaultAlgorithm() {
+        if (typeof window.restoreDefaultCompetitionOptimizer === 'function') {
+            window.restoreDefaultCompetitionOptimizer();
+            if (window.jQuery) {
+                jQuery('#btn-view-top10').remove();
+            }
+            return true;
+        }
+        if (typeof window.DefaultCompetitionOptimizer !== 'undefined') {
+            window.CompetitionOptimizer = window.DefaultCompetitionOptimizer;
+            if (window.jQuery) {
+                jQuery('#btn-view-top10').remove();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    window.getCompetitionAutoCondimentEnabled = getAutoCondimentEnabled;
+    window.getCompetitionDefaultNewbieEquipEnabled = getDefaultNewbieEquipEnabled;
+    window.isDefaultCompetitionMode = isDefaultCompetitionMode;
 
     function executeAlgorithm(code) {
         try {
@@ -3264,10 +3314,19 @@
         var modalHtml = '<div id="competition-settings-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">' +
             '<div style="background: white; border-radius: 8px; padding: 20px; max-width: 600px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">' +
                 '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">' +
-                    '<h4 style="margin: 0; font-size: 18px; font-weight: bold;">算法设置</h4>' +
+                    '<h4 style="margin: 0; font-size: 18px; font-weight: bold;">设置</h4>' +
                     '<button id="close-settings-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #999; line-height: 1;">&times;</button>' +
                 '</div>' +
-                '<div style="margin-bottom: 20px;">' +
+                '<div id="competition-default-settings" style="display: none; margin-bottom: 20px;">' +
+                    '<div style="margin-top: 6px; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">' +
+                        '<div>' +
+                            '<div style="font-weight: bold; font-size: 14px;">无厨具厨师使用新手厨具</div>' +
+                            '<div style="font-size: 12px; color: #888; margin-top: 4px;">勾选后，会按新手奖池厨具做自动搭配</div>' +
+                        '</div>' +
+                        '<input type="checkbox" id="chk-competition-default-newbie-equip" data-toggle="toggle" data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="56px">' +
+                    '</div>' +
+                '</div>' +
+                '<div id="competition-advanced-settings" style="margin-bottom: 20px;">' +
                     '<div style="display: flex; gap: 10px; align-items: flex-end; margin-bottom: 15px;">' +
                         '<div style="flex: 1;">' +
                             '<label style="display: block; margin-bottom: 8px; font-weight: bold; font-size: 14px;">选择文件（.js）：</label>' +
@@ -3295,6 +3354,20 @@
         $('body').append(modalHtml);
         if ($.fn.bootstrapToggle) {
             $('#chk-competition-auto-condiment').bootstrapToggle();
+            $('#chk-competition-default-newbie-equip').bootstrapToggle();
+        }
+    }
+
+    function updateCompetitionSettingsMode() {
+        var isDefaultMode = isDefaultCompetitionMode();
+        $('#competition-default-settings').toggle(isDefaultMode);
+        $('#competition-advanced-settings').toggle(!isDefaultMode);
+        $('#competition-settings-modal h4').text('设置');
+
+        var newbieEnabled = getDefaultNewbieEquipEnabled();
+        $('#chk-competition-default-newbie-equip').prop('checked', newbieEnabled);
+        if ($('#chk-competition-default-newbie-equip').parent().hasClass('toggle')) {
+            $('#chk-competition-default-newbie-equip').bootstrapToggle(newbieEnabled ? 'on' : 'off');
         }
     }
 
@@ -3332,12 +3405,15 @@
 
     function initEventListeners() {
         $(document).on('click', '#btn-competition-settings', function() {
+            updateCompetitionSettingsMode();
             $('#competition-settings-modal').css('display', 'flex');
-            updateAlgorithmList();
-            var enabled = getAutoCondimentEnabled();
-            $('#chk-competition-auto-condiment').prop('checked', enabled);
-            if ($('#chk-competition-auto-condiment').parent().hasClass('toggle')) {
-                $('#chk-competition-auto-condiment').bootstrapToggle(enabled ? 'on' : 'off');
+            if (!isDefaultCompetitionMode()) {
+                updateAlgorithmList();
+                var enabled = getAutoCondimentEnabled();
+                $('#chk-competition-auto-condiment').prop('checked', enabled);
+                if ($('#chk-competition-auto-condiment').parent().hasClass('toggle')) {
+                    $('#chk-competition-auto-condiment').bootstrapToggle(enabled ? 'on' : 'off');
+                }
             }
         });
 
@@ -3379,8 +3455,11 @@
 
                 var id = saveAlgorithm(file.name, code);
                 if (id) {
-                    setActiveAlgorithm(id);
-                    showAlert('算法导入成功！新算法已生效。', '成功');
+                    if (setActiveAlgorithm(id)) {
+                        showAlert('算法导入成功！新算法已生效。', '成功');
+                    } else {
+                        showAlert('算法导入失败，已恢复默认算法。', '错误');
+                    }
                     updateAlgorithmList();
                     fileInput.value = '';
                 }
@@ -3406,8 +3485,11 @@
                 return;
             }
             
-            setActiveAlgorithm(selectedId);
-            showAlert('算法已切换！新算法已生效。', '成功');
+            if (setActiveAlgorithm(selectedId)) {
+                showAlert('算法已切换！新算法已生效。', '成功');
+            } else {
+                showAlert('算法切换失败，已恢复默认算法。', '错误');
+            }
             updateAlgorithmList();
         });
 
@@ -3415,9 +3497,14 @@
             setAutoCondimentEnabled($(this).prop('checked'));
         });
 
+        $(document).on('change', '#chk-competition-default-newbie-equip', function() {
+            setDefaultNewbieEquipEnabled($(this).prop('checked'));
+        });
+
         $(document).on('click', '#btn-delete-current-algorithm', function() {
             // 获取当前选中的算法（从下拉框）
             var selectedId = $('#algorithm-select').val();
+            var wasActive = selectedId && selectedId === activeAlgorithmId;
             
             if (!selectedId) {
                 showAlert('请先选择要删除的算法', '提示');
@@ -3430,12 +3517,12 @@
             if (confirm('确定要删除算法 "' + selectedAlgo.name + '" 吗？' + (selectedId === activeAlgorithmId ? '删除后将恢复使用默认算法。' : ''))) {
                 if (deleteAlgorithm(selectedId)) {
                     // 如果删除的是当前激活的算法，清除全局 CompetitionOptimizer 对象
-                    if (selectedId === activeAlgorithmId && typeof window.CompetitionOptimizer !== 'undefined') {
-                        delete window.CompetitionOptimizer;
-                        console.log('[厨神大赛] 已清除 CompetitionOptimizer');
+                    if (wasActive && typeof window.CompetitionOptimizer !== 'undefined') {
+                        restoreDefaultAlgorithm();
+                        console.log('[厨神大赛] 已恢复默认 CompetitionOptimizer');
                     }
                     
-                    showAlert('算法已删除！' + (selectedId === activeAlgorithmId ? '已恢复使用默认算法。' : ''), '成功');
+                    showAlert('算法已删除！' + (wasActive ? '已恢复使用默认算法。' : ''), '成功');
                     updateAlgorithmList();
                 }
             }
@@ -3444,13 +3531,26 @@
 
     function init() {
         loadAlgorithmList();
-        
-        if (activeAlgorithmId) {
+
+        var isChushenMode = checkChushenParam();
+        if (!isChushenMode) {
+            restoreDefaultAlgorithm();
+        } else if (activeAlgorithmId) {
             var code = getAlgorithmCode(activeAlgorithmId);
             if (code) {
-                executeAlgorithm(code);
+                if (!executeAlgorithm(code)) {
+                    activeAlgorithmId = null;
+                    localStorage.removeItem(STORAGE_ACTIVE_KEY);
+                    restoreDefaultAlgorithm();
+                }
                 var activeAlgo = algorithmList.find(function(a) { return a.id === activeAlgorithmId; });
+            } else {
+                activeAlgorithmId = null;
+                localStorage.removeItem(STORAGE_ACTIVE_KEY);
+                restoreDefaultAlgorithm();
             }
+        } else {
+            restoreDefaultAlgorithm();
         }
         
         initDisplayControl();
