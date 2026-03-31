@@ -6055,7 +6055,7 @@
                     '<div class="collection-result-card-title-wrap">',
                         '<div class="collection-result-card-title">',
                             '<span class="collection-result-area-name"' + areaNameStyle + '>' + escapeHtml(result.areaName) + '</span>',
-                            '<span class="collection-result-title-summary">', summaryHtml.join(''), '</span>',
+                            summaryHtml.join(''),
                         '</div>',
                     '</div>',
                     options.hideActions ? '' : [
