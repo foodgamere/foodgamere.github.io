@@ -561,6 +561,42 @@
     color: #d9534f;
 }
 
+.collection-result-chef-green-amber-inline {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #2f8f42;
+}
+
+.collection-result-chef-blue-amber-inline {
+    margin-left: 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #2e78c5;
+}
+
+.collection-result-chef-amber-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.collection-result-chef-amber-trigger:hover,
+.collection-result-chef-amber-trigger:focus {
+    opacity: 0.9;
+    text-decoration: none;
+    outline: none;
+}
+
 .collection-result-chef-replace-btn {
     padding: 4px 12px;
     font-size: 12px;
@@ -636,6 +672,51 @@
     flex: 1;
 }
 
+.replace-chef-tab-nav {
+    margin: 0 0 12px 0;
+    border-bottom: 1px solid #e6ebf2;
+}
+
+.replace-chef-tab-nav > li > a {
+    padding: 6px 12px;
+    color: #5f6f81;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.replace-chef-tab-nav > li.active > a,
+.replace-chef-tab-nav > li.active > a:hover,
+.replace-chef-tab-nav > li.active > a:focus {
+    color: #1e88e5;
+    border: 1px solid #d9e7f8;
+    border-bottom-color: transparent;
+    background: #fff;
+}
+
+.replace-chef-tab-content > .tab-pane {
+    display: none;
+}
+
+.replace-chef-tab-content > .active {
+    display: block;
+}
+
+.replace-chef-group + .replace-chef-group {
+    margin-top: 18px;
+}
+
+.replace-chef-group-title {
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #22313f;
+}
+
+.replace-chef-group-list {
+    display: flex;
+    flex-direction: column;
+}
+
 .replace-chef-item {
     padding: 10px 12px;
     margin-bottom: 6px;
@@ -670,6 +751,21 @@
 .replace-chef-item-stars {
     font-size: 12px;
     color: #ffa500;
+}
+
+.replace-chef-item-inline-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 6px;
+    border-radius: 9px;
+    font-size: 10px;
+    line-height: 18px;
+    font-weight: 600;
+}
+
+.replace-chef-item-inline-tag.is-red-amber {
+    background: rgba(244, 67, 54, 0.12);
+    color: #d84315;
 }
 
 .replace-chef-item-ult {
@@ -709,11 +805,29 @@
     color: #1e88e5;
 }
 
+.replace-chef-item-value-chip.is-aura {
+    background: #eef7ea;
+    color: #4a8f3a;
+}
+
+.replace-chef-item-value-chip.is-expectation {
+    background: #fff4de;
+    color: #cc7a00;
+}
+
 .replace-chef-item-skill-metrics {
     display: flex;
     align-items: center;
     gap: 6px;
     flex-wrap: wrap;
+}
+
+.replace-chef-item-extra-metrics {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
 }
 
 .replace-chef-item-skill-chip {
@@ -740,6 +854,37 @@
 .replace-chef-item-skill-chip.is-crit-chance {
     background: #fff1e8;
     color: #e67e22;
+}
+
+.replace-chef-item-meta-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    line-height: 20px;
+    font-weight: 600;
+}
+
+.replace-chef-item-meta-chip.is-equip {
+    background: #eef3f8;
+    color: #5f6f81;
+}
+
+.replace-chef-item-meta-chip.is-green-amber {
+    background: #eaf7e8;
+    color: #4a8f3a;
+}
+
+.replace-chef-item-meta-chip.is-red-amber {
+    background: #ffebe7;
+    color: #d84315;
+}
+
+.replace-chef-item-meta-chip.is-blue-amber {
+    background: #eaf3ff;
+    color: #2e78c5;
 }
 
 .replace-chef-item-assigned {
@@ -810,6 +955,35 @@
     white-space: nowrap;
 }
 
+.collection-result-chef-meta-item.collection-result-chef-amber-trigger {
+    padding: 0 18px 0 6px;
+    position: relative;
+    min-height: 22px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.collection-result-chef-meta-item.collection-result-chef-amber-trigger::after {
+    content: "";
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid currentColor;
+    transform: translateY(-25%);
+}
+
+.collection-result-chef-meta-item.collection-result-chef-amber-trigger:hover,
+.collection-result-chef-meta-item.collection-result-chef-amber-trigger:focus {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(34, 49, 63, 0.12);
+}
+
 .collection-result-chef-meta-item.is-expectation {
     background: #eef7ea;
     color: #2f8f42;
@@ -842,14 +1016,16 @@
 }
 
 .collection-result-chef-meta-item.is-lab-value,
-.collection-result-chef-meta-item.is-jade-value {
+.collection-result-chef-meta-item.is-jade-value,
+.collection-result-chef-meta-item.is-cond-value {
     background: #e3f2fd;
     color: #2e78c5;
     font-weight: 600;
 }
 
 .collection-result-chef-meta-item.is-lab-value .collection-result-chef-value-number,
-.collection-result-chef-meta-item.is-jade-value .collection-result-chef-value-number {
+.collection-result-chef-meta-item.is-jade-value .collection-result-chef-value-number,
+.collection-result-chef-meta-item.is-cond-value .collection-result-chef-value-number {
     color: #2196f3;
     font-weight: 700;
 }
@@ -860,10 +1036,87 @@
     font-weight: 600;
 }
 
+.collection-result-chef-meta-item.is-red-amber {
+    background: #fff0ef;
+    color: #d9534f;
+    font-weight: 600;
+    border-color: rgba(217, 83, 79, 0.28);
+}
+
+.collection-result-chef-meta-item.is-green-amber {
+    background: #eef7ea;
+    color: #2f8f42;
+    font-weight: 600;
+    border-color: rgba(47, 143, 66, 0.28);
+}
+
+.collection-result-chef-meta-item.is-cond-amber {
+    background: #eff4f8;
+    color: #647587;
+    font-weight: 600;
+    border-color: rgba(100, 117, 135, 0.22);
+}
+
+.collection-result-chef-meta-item.is-cond-amber.collection-result-chef-amber-trigger:hover,
+.collection-result-chef-meta-item.is-cond-amber.collection-result-chef-amber-trigger:focus {
+    background: #e7eef5;
+    border-color: rgba(100, 117, 135, 0.4);
+}
+
+.collection-result-chef-amber-part {
+    display: inline-flex;
+    align-items: center;
+}
+
+.collection-result-chef-amber-part.is-green {
+    color: #2f8f42;
+}
+
+.collection-result-chef-amber-part.is-blue {
+    color: #2e78c5;
+}
+
+.collection-result-chef-amber-part.is-separator,
+.collection-result-chef-amber-part.is-empty {
+    color: #7b8794;
+}
+
+.collection-result-chef-meta-item.is-red-amber.collection-result-chef-amber-trigger:hover,
+.collection-result-chef-meta-item.is-red-amber.collection-result-chef-amber-trigger:focus {
+    background: #ffe5e2;
+    border-color: rgba(217, 83, 79, 0.45);
+}
+
+.collection-result-chef-meta-item.is-green-amber.collection-result-chef-amber-trigger:hover,
+.collection-result-chef-meta-item.is-green-amber.collection-result-chef-amber-trigger:focus {
+    background: #e4f3df;
+    border-color: rgba(47, 143, 66, 0.45);
+}
+
 .collection-result-equip-select-wrap {
     display: inline-flex;
     min-width: 0;
     max-width: 100%;
+}
+
+.collection-result-equip-select-wrap.is-readonly {
+    max-width: 100%;
+}
+
+.collection-result-equip-static {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0 8px;
+    border-radius: 12px;
+    border: 1px solid #d8e2ea;
+    background: #f8fafc;
+    color: #22313f;
+    font-size: 10px;
+    line-height: 20px;
+    white-space: nowrap;
 }
 
 .collection-result-equip-select-wrap .bootstrap-select {
@@ -1200,8 +1453,7 @@
 
 .collection-sort-name-池塘,
 .collection-sort-name-还寒洞,
-.collection-sort-name-炸,
-.collection-sort-name-彭铿阁 {
+.collection-sort-name-炸 {
     color: #2196f3;
 }
 
@@ -1231,9 +1483,12 @@
     color: #000;
 }
 
-.collection-sort-name-藏心亭,
-.collection-sort-name-樊正阁 {
+.collection-sort-name-藏心亭 {
     color: #e91e63;
+}
+
+.collection-sort-name-樊正阁 {
+    color: #ff9800;
 }
 
 .collection-sort-name-切 {
@@ -1242,19 +1497,23 @@
 
 .collection-sort-name-烤,
 .collection-sort-name-庖丁阁 {
-    color: #9c27b0;
+    color: #f2d56b;
 }
 
 .collection-sort-name-膳祖阁 {
-    color: #673ab7;
+    color: #00bcd4;
 }
 
 .collection-sort-name-易牙阁 {
-    color: #3f51b5;
+    color: #9c27b0;
 }
 
 .collection-sort-name-伊尹阁 {
-    color: #009688;
+    color: #f44336;
+}
+
+.collection-sort-name-彭铿阁 {
+    color: #4caf50;
 }
 
 .collection-sort-divider,
@@ -1308,6 +1567,21 @@
     width: 70px;
     min-width: 70px;
     padding-right: 6px;
+}
+
+.collection-sort-static-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 52px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 4px;
+    background: #fff;
+    border: 1px solid #d9e2ec;
+    color: #334e68;
+    font-size: 12px;
+    line-height: 1;
 }
 
 .collection-sort-floating-menu {
@@ -1498,6 +1772,11 @@
 .collection-team-detail-list {
     max-height: 430px;
     overflow-y: auto;
+}
+
+.collection-team-detail-list.is-result-layout {
+    max-height: none;
+    overflow: visible;
 }
 
 .collection-team-item {
@@ -1905,6 +2184,34 @@
         max-width: 100%;
     }
 
+    .collection-result-equip-menu-container {
+        position: fixed !important;
+        top: 35px !important;
+        left: 10px !important;
+        right: 10px !important;
+        width: auto !important;
+        z-index: 1065 !important;
+    }
+
+    .collection-result-equip-menu-container .dropdown-menu {
+        left: 0 !important;
+        right: auto !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: none !important;
+    }
+
+    .collection-result-equip-menu {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        max-height: calc(100vh - 90px) !important;
+    }
+
+    .collection-result-equip-menu-inner {
+        max-height: calc(100vh - 190px) !important;
+    }
+
     .collection-result-chef-replace-btn {
         padding: 3px 8px;
         font-size: 11px;
@@ -2040,6 +2347,8 @@
     .collection-team-scheme-btn {
         flex: 1 1 0;
     }
+}
+
 /* 配置按钮样式 */
 .collection-config-btn {
     padding: 2px 8px;
@@ -2091,4 +2400,207 @@
     color: #666;
     margin-left: 24px;
     line-height: 1.5;
+    white-space: nowrap;
+}
+
+.collection-bootbox-center {
+    padding: 0 !important;
+}
+
+.collection-bootbox-center .modal-dialog {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%) !important;
+    margin: 0 !important;
+    width: calc(100vw - 32px);
+    max-width: 600px;
+}
+
+.collection-bootbox-center .modal-content {
+    margin: 0;
+}
+
+#area-config-modal #config-cond .config-item:last-child .config-item-desc {
+    margin-left: 0;
+    white-space: nowrap;
+}
+
+#area-config-modal .config-cond-list {
+    margin-top: 12px;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start;
+    gap: 8px 12px;
+}
+
+#area-config-modal .config-cond-row {
+    width: calc((100% - 12px) / 2);
+    max-width: calc((100% - 12px) / 2);
+    display: inline-flex !important;
+    flex: 0 0 calc((100% - 12px) / 2);
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    min-width: 0;
+    vertical-align: top;
+}
+
+#area-config-modal .config-cond-name {
+    display: inline-flex;
+    align-items: center;
+    width: 52px;
+    flex: 0 0 52px;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 500;
+    color: #333;
+    line-height: 1.2;
+}
+
+#area-config-modal .config-cond-picker {
+    width: auto !important;
+    max-width: 140px;
+    flex: 0 0 140px;
+}
+
+#area-config-modal .config-cond-picker > .dropdown-toggle {
+    height: 34px;
+    min-height: 34px;
+    min-width: 0;
+    max-width: 140px;
+    padding: 0 22px 0 10px;
+    border-radius: 8px;
+    border: 1px solid #d8e2ea;
+    background: #f8fafc;
+    color: #22313f;
+    font-size: 12px;
+    line-height: 32px;
+    box-shadow: none;
+}
+
+#area-config-modal .config-cond-picker.open > .dropdown-toggle,
+#area-config-modal .config-cond-picker > .dropdown-toggle:focus,
+#area-config-modal .config-cond-picker > .dropdown-toggle:hover {
+    border-color: #90caf9;
+    background: #eef6ff;
+    color: #1f5f96;
+    outline: none !important;
+}
+
+#area-config-modal .config-cond-picker > .dropdown-toggle .filter-option {
+    display: flex !important;
+    align-items: center;
+    height: 100%;
+    padding: 0;
+}
+
+#area-config-modal .config-cond-picker > .dropdown-toggle .filter-option-inner,
+#area-config-modal .config-cond-picker > .dropdown-toggle .filter-option-inner-inner {
+    display: flex;
+    align-items: center;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+#area-config-modal .config-cond-picker > .dropdown-toggle .filter-option-inner-inner {
+    line-height: 1.2;
+}
+
+#area-config-modal .config-cond-picker .caret {
+    right: 7px;
+}
+
+#area-config-modal .config-cond-menu {
+    min-width: 150px;
+    max-width: min(280px, calc(100vw - 24px));
+}
+
+#area-config-modal .config-cond-menu li a .text {
+    overflow: visible;
+}
+
+#area-config-modal .config-cond-menu li > a {
+    position: relative;
+}
+
+#area-config-modal .config-cond-menu li > a::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: 0;
+    height: 1px;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+#area-config-modal .config-cond-menu li:last-child > a::after {
+    display: none;
+}
+
+#area-config-modal .config-cond-menu li.active:not(.selected) > a,
+#area-config-modal .config-cond-menu li.active:not(.selected) > a:hover,
+#area-config-modal .config-cond-menu li.active:not(.selected) > a:focus {
+    background: #fff;
+    color: inherit;
+}
+
+.config-cond-option {
+    display: inline-flex;
+    align-items: center;
+    min-width: max-content;
+    white-space: nowrap;
+}
+
+.config-cond-option-text {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.config-cond-option-text.is-empty {
+    color: #7b8794;
+}
+
+@media (max-width: 767px) {
+    .config-item-desc {
+        font-size: 11px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .collection-bootbox-center .modal-dialog {
+        width: calc(100vw - 20px);
+        max-width: none;
+    }
+
+    #area-config-modal .config-cond-list {
+        gap: 8px 10px;
+    }
+
+    #area-config-modal .config-cond-row {
+        width: calc((100% - 10px) / 2);
+        max-width: calc((100% - 10px) / 2);
+        flex-basis: calc((100% - 10px) / 2);
+        gap: 6px;
+    }
+
+    #area-config-modal .config-cond-name {
+        width: 46px;
+        flex: 0 0 46px;
+        font-size: 12px;
+    }
+
+    #area-config-modal .config-cond-picker {
+        max-width: 112px;
+        flex-basis: 112px;
+    }
+
+    #area-config-modal .config-cond-picker > .dropdown-toggle {
+        max-width: 112px;
+        padding-right: 20px;
+        font-size: 11px;
+    }
 }

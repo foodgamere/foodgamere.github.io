@@ -61,6 +61,113 @@
     };
     // 玉片区可选采集点档位。
     var JADE_CAPACITY_OPTIONS = [240, 225, 210, 195, 180, 165, 150, 135, 120, 105, 90, 75, 60, 45, 30, 15];
+    // 调料区固定目标值与口味定义。
+    var COND_CAPACITY = 1080;
+    var COND_PEOPLE = 5;
+    var COND_FLAVOR_CONFIG = {
+        Sweet: { label: '甜', field: 'sweetVal', effectType: 'Sweet' },
+        Sour: { label: '酸', field: 'sourVal', effectType: 'Sour' },
+        Spicy: { label: '辣', field: 'spicyVal', effectType: 'Spicy' },
+        Salty: { label: '咸', field: 'saltyVal', effectType: 'Salty' },
+        Bitter: { label: '苦', field: 'bitterVal', effectType: 'Bitter' },
+        Tasty: { label: '鲜', field: 'tastyVal', effectType: 'Tasty' },
+        Fixed: { label: '必出', field: '', effectType: '' }
+    };
+    var COND_FLAVOR_PILL_COLORS = {
+        Sour: { background: '#ACD78E', color: '#49622D' },
+        Sweet: { background: '#F5B7BF', color: '#8D4B55' },
+        Bitter: { background: '#A6A6A6', color: '#4F4F4F' },
+        Spicy: { background: '#D05E59', color: '#FFFFFF' },
+        Salty: { background: '#91ACE0', color: '#355387' },
+        Tasty: { background: '#FEE695', color: '#8C6A00' },
+        Fixed: { background: '#F0F2F5', color: '#66707A' }
+    };
+    var COND_AREA_ALIASES = {
+        '梵正阁': '樊正阁',
+        '刨丁阁': '庖丁阁'
+    };
+    var COND_DEFAULT_SELECTION_MAP = {
+        '樊正阁': '鱼露',
+        '庖丁阁': '山楂',
+        '膳祖阁': '蜂蜜',
+        '易牙阁': '丁香',
+        '彭铿阁': '泡椒',
+        '伊尹阁': '盐'
+    };
+    var COND_AREA_META = {
+        '膳祖阁': {
+            technique: '炸',
+            condiments: [
+                { name: '乌梅', flavorKey: 'Sour' },
+                { name: '蜂蜜', flavorKey: 'Sweet' },
+                { name: '碱', flavorKey: 'Bitter' },
+                { name: '花椒', flavorKey: 'Spicy' },
+                { name: '芝士', flavorKey: 'Salty' },
+                { name: '芝麻', flavorKey: 'Tasty' },
+                { name: '蒜', flavorKey: 'Fixed' }
+            ]
+        },
+        '彭铿阁': {
+            technique: '煮',
+            condiments: [
+                { name: '酸菜', flavorKey: 'Sour' },
+                { name: '红枣', flavorKey: 'Sweet' },
+                { name: '菊花', flavorKey: 'Bitter' },
+                { name: '泡椒', flavorKey: 'Spicy' },
+                { name: '酱油', flavorKey: 'Salty' },
+                { name: '罗勒', flavorKey: 'Tasty' },
+                { name: '卤水', flavorKey: 'Fixed' }
+            ]
+        },
+        '伊尹阁': {
+            technique: '炒',
+            condiments: [
+                { name: '醋', flavorKey: 'Sour' },
+                { name: '蚝油', flavorKey: 'Sweet' },
+                { name: '苦瓜', flavorKey: 'Bitter' },
+                { name: '豆瓣', flavorKey: 'Spicy' },
+                { name: '盐', flavorKey: 'Salty' },
+                { name: '味精', flavorKey: 'Tasty' },
+                { name: '西芹', flavorKey: 'Fixed' }
+            ]
+        },
+        '庖丁阁': {
+            technique: '切',
+            condiments: [
+                { name: '山楂', flavorKey: 'Sour' },
+                { name: '甘草', flavorKey: 'Sweet' },
+                { name: '杏仁', flavorKey: 'Bitter' },
+                { name: '芥末', flavorKey: 'Spicy' },
+                { name: '椒盐', flavorKey: 'Salty' },
+                { name: '香茅', flavorKey: 'Tasty' },
+                { name: '香菜', flavorKey: 'Fixed' }
+            ]
+        },
+        '易牙阁': {
+            technique: '烤',
+            condiments: [
+                { name: '柠檬', flavorKey: 'Sour' },
+                { name: '冰糖', flavorKey: 'Sweet' },
+                { name: '丁香', flavorKey: 'Bitter' },
+                { name: '胡椒', flavorKey: 'Spicy' },
+                { name: '孜然', flavorKey: 'Salty' },
+                { name: '紫苏', flavorKey: 'Tasty' },
+                { name: '香叶', flavorKey: 'Fixed' }
+            ]
+        },
+        '樊正阁': {
+            technique: '蒸',
+            condiments: [
+                { name: '酸角', flavorKey: 'Sour' },
+                { name: '红糖', flavorKey: 'Sweet' },
+                { name: '陈皮', flavorKey: 'Bitter' },
+                { name: '生姜', flavorKey: 'Spicy' },
+                { name: '豆豉', flavorKey: 'Salty' },
+                { name: '鱼露', flavorKey: 'Tasty' },
+                { name: '料酒', flavorKey: 'Fixed' }
+            ]
+        }
+    };
     // 人数配置统一档位。
     var DEFAULT_PEOPLE_OPTIONS = [5, 4, 3, 2, 1, 0];
     // 页面运行态：UI展开状态、区域开关、排序缓存、查询结果等。
@@ -194,7 +301,7 @@
             return { defaultCapacity: 60, capacityOptions: [60] };
         }
         if (prefix === 'cond') {
-            return { defaultCapacity: 60, capacityOptions: [60] };
+            return { defaultCapacity: COND_CAPACITY, capacityOptions: [COND_CAPACITY], fixedPeople: COND_PEOPLE };
         }
         return { defaultCapacity: 60, capacityOptions: [60] };
     }
@@ -211,6 +318,9 @@
 
     // 读取区域人数配置，默认5人。
     function getStoredAreaPeople(prefix, name) {
+        if (prefix === 'cond') {
+            return COND_PEOPLE;
+        }
         var raw = window.localStorage.getItem(getCollectionStorageKey(getAreaPeopleKey(prefix, name)));
         var value = parseInt(raw, 10);
         return Number.isNaN(value) ? 5 : value;
@@ -218,6 +328,9 @@
 
     // 读取区域采集点配置，未配置时使用区域默认值。
     function getStoredAreaCapacity(prefix, name) {
+        if (prefix === 'cond') {
+            return COND_CAPACITY;
+        }
         var meta = getAreaMeta(prefix, name);
         var raw = window.localStorage.getItem(getCollectionStorageKey(getAreaCapacityKey(prefix, name)));
         var value = parseInt(raw, 10);
@@ -226,11 +339,17 @@
 
     // 持久化区域人数配置。
     function saveStoredAreaPeople(prefix, name, value) {
+        if (prefix === 'cond') {
+            return;
+        }
         window.localStorage.setItem(getCollectionStorageKey(getAreaPeopleKey(prefix, name)), String(value));
     }
 
     // 持久化区域采集点配置。
     function saveStoredAreaCapacity(prefix, name, value) {
+        if (prefix === 'cond') {
+            return;
+        }
         window.localStorage.setItem(getCollectionStorageKey(getAreaCapacityKey(prefix, name)), String(value));
     }
 
@@ -357,8 +476,9 @@
     // 根据地区名称推断所在分组（菜/玉片/实验室/调料）。
     function getAreaGroupKeyByAreaName(areaName) {
         var matchedKey = 'veg';
+        var normalizedAreaName = normalizeCondAreaName(areaName);
         Object.keys(AREA_DEFS).some(function(key) {
-            if (AREA_DEFS[key].names.indexOf(areaName) >= 0) {
+            if (AREA_DEFS[key].names.indexOf(normalizedAreaName) >= 0 || AREA_DEFS[key].names.indexOf(areaName) >= 0) {
                 matchedKey = key;
                 return true;
             }
@@ -382,12 +502,226 @@
         return getAreaGroupKeyByAreaName(areaName) === 'jade';
     }
 
+    function normalizeCondAreaName(areaName) {
+        var normalized = String(areaName || '').trim();
+        return COND_AREA_ALIASES[normalized] || normalized;
+    }
+
+    function getCondAreaMeta(areaName) {
+        return COND_AREA_META[normalizeCondAreaName(areaName)] || null;
+    }
+
+    function getCondFlavorConfig(flavorKey) {
+        return COND_FLAVOR_CONFIG[String(flavorKey || '')] || null;
+    }
+
+    function getCondSelectionStorageKey(areaName) {
+        return 'cond_selection::' + normalizeCondAreaName(areaName);
+    }
+
+    function getStoredCondimentSelection(areaName) {
+        var areaMeta = getCondAreaMeta(areaName);
+        var raw = window.localStorage.getItem(getCollectionStorageKey(getCondSelectionStorageKey(areaName)));
+        var selectionName = String(raw || '').trim();
+        var normalizedAreaName = normalizeCondAreaName(areaName);
+        var defaultSelectionName = String(COND_DEFAULT_SELECTION_MAP[normalizedAreaName] || '').trim();
+
+        if (!areaMeta || !selectionName) {
+            if (!selectionName && areaMeta && Array.isArray(areaMeta.condiments) && areaMeta.condiments.length) {
+                selectionName = defaultSelectionName || String((areaMeta.condiments[0] || {}).name || '').trim();
+            }
+            if (!selectionName) {
+                return '';
+            }
+        }
+
+        return areaMeta.condiments.some(function(item) {
+            return item.name === selectionName;
+        }) ? selectionName : '';
+    }
+
+    function saveStoredCondimentSelection(areaName, condimentName) {
+        var storageKey = getCollectionStorageKey(getCondSelectionStorageKey(areaName));
+        var nextValue = String(condimentName || '').trim();
+        if (!nextValue) {
+            window.localStorage.removeItem(storageKey);
+            return;
+        }
+        window.localStorage.setItem(storageKey, nextValue);
+    }
+
+    function getCondAreaSelection(areaName) {
+        var areaMeta = getCondAreaMeta(areaName);
+        var selectionName = getStoredCondimentSelection(areaName);
+        var condimentMeta;
+        var flavorMeta;
+
+        if (!areaMeta || !selectionName) {
+            return null;
+        }
+
+        condimentMeta = areaMeta.condiments.find(function(item) {
+            return item.name === selectionName;
+        }) || null;
+        if (!condimentMeta) {
+            return null;
+        }
+
+        flavorMeta = getCondFlavorConfig(condimentMeta.flavorKey);
+        return {
+            areaName: normalizeCondAreaName(areaName),
+            technique: areaMeta.technique,
+            name: condimentMeta.name,
+            flavorKey: condimentMeta.flavorKey,
+            flavorLabel: flavorMeta ? flavorMeta.label : '',
+            field: flavorMeta ? flavorMeta.field : '',
+            effectType: flavorMeta ? flavorMeta.effectType : ''
+        };
+    }
+
+    function getCondimentNameByAreaFlavor(areaName, flavorKey) {
+        var areaMeta = getCondAreaMeta(areaName);
+        var normalizedFlavorKey = String(flavorKey || '');
+        var condimentMeta;
+
+        if (!areaMeta || !normalizedFlavorKey) {
+            return '';
+        }
+
+        condimentMeta = (areaMeta.condiments || []).find(function(item) {
+            return item && String(item.flavorKey || '') === normalizedFlavorKey;
+        }) || null;
+
+        return condimentMeta ? String(condimentMeta.name || '') : '';
+    }
+
+    function getCondFlavorValue(chef, flavorKey) {
+        var flavorMeta = getCondFlavorConfig(flavorKey);
+        if (String(flavorKey || '') === 'Fixed') {
+            return Math.max(
+                toInt(chef && chef.sweetVal, 0),
+                toInt(chef && chef.sourVal, 0),
+                toInt(chef && chef.spicyVal, 0),
+                toInt(chef && chef.saltyVal, 0),
+                toInt(chef && chef.bitterVal, 0),
+                toInt(chef && chef.tastyVal, 0)
+            );
+        }
+        if (!chef || !flavorMeta || !flavorMeta.field) {
+            return 0;
+        }
+        return toInt(chef[flavorMeta.field], 0);
+    }
+
+    function getCondFlavorKeyByLabel(flavorLabel) {
+        var matchedKey = '';
+        Object.keys(COND_FLAVOR_CONFIG).some(function(key) {
+            if (COND_FLAVOR_CONFIG[key] && COND_FLAVOR_CONFIG[key].label === flavorLabel) {
+                matchedKey = key;
+                return true;
+            }
+            return false;
+        });
+        return matchedKey;
+    }
+
+    function getCondFlavorKeyByCondimentName(condimentName) {
+        var matchedKey = '';
+        Object.keys(COND_AREA_META).some(function(areaName) {
+            var areaMeta = COND_AREA_META[areaName];
+            var condiment = areaMeta && Array.isArray(areaMeta.condiments) ? areaMeta.condiments.find(function(item) {
+                return item && item.name === condimentName;
+            }) : null;
+            if (condiment) {
+                matchedKey = condiment.flavorKey || '';
+                return true;
+            }
+            return false;
+        });
+        return matchedKey;
+    }
+
+    function getCondSummaryPillStyle(condimentName, flavorLabel) {
+        var flavorKey = getCondFlavorKeyByCondimentName(condimentName) || getCondFlavorKeyByLabel(flavorLabel);
+        var colorMeta = COND_FLAVOR_PILL_COLORS[flavorKey];
+        if (!colorMeta) {
+            return '';
+        }
+        return ' style="background:' + colorMeta.background + ';color:' + colorMeta.color + ';"';
+    }
+
+    function getCondFlavorTextColor(flavorKey) {
+        var colorMap = {
+            Sour: '#4caf50',
+            Sweet: '#e97bb8',
+            Bitter: '#808080',
+            Spicy: '#f44336',
+            Salty: '#2196f3',
+            Tasty: '#f4b400',
+            Fixed: '#222222'
+        };
+        return colorMap[String(flavorKey || '')] || '#556575';
+    }
+
+    function buildCondConfigOptionContent(item) {
+        var flavorMeta = getCondFlavorConfig(item && item.flavorKey);
+        var flavorLabel = flavorMeta ? flavorMeta.label : '';
+        var text = String(item && item.name || '') + (flavorLabel ? '（' + flavorLabel + '）' : '');
+        var color = getCondFlavorTextColor(item && item.flavorKey);
+        // getOptionsString 会把 data-content 包在双引号里，这里统一用单引号避免打断属性。
+        return "<div class='config-cond-option'><span class='config-cond-option-text' style='color:" + color + ";'>" + escapeHtml(text) + "</span></div>";
+    }
+
+    function setCondConfigSelectValue($select, value) {
+        var nextValue = String(value || '');
+        $select.val(nextValue);
+        if ($select.data('selectpicker')) {
+            $select.selectpicker('refresh');
+            $select.selectpicker('render');
+        }
+    }
+
+    function initializeCondConfigPickers($modal) {
+        ($modal || $(document)).find('select.config-cond-select').each(function() {
+            var $select = $(this);
+            try {
+                if ($select.data('selectpicker')) {
+                    $select.selectpicker('destroy');
+                }
+                $select.selectpicker();
+                setCondConfigSelectValue($select, $select.data('previous-value') || $select.val() || '');
+                if ($select.data('selectpicker')) {
+                    $select.parent('.bootstrap-select').addClass('config-cond-picker');
+                    $select.data('selectpicker').$menu.addClass('config-cond-menu');
+                }
+            } catch (e) {}
+        });
+    }
+
     function getRedAmberSlotCountFromChef(chef) {
         if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
             return 0;
         }
         return chef.disk.ambers.filter(function(slot) {
             return slot && slot.type === 1;
+        }).length;
+    }
+
+    function getGreenAmberSlotCountFromChef(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return 0;
+        }
+        return chef.disk.ambers.filter(function(slot) {
+            return slot && slot.type === 2;
+        }).length;
+    }
+
+    function getBlueAmberSlotCountFromChef(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return 0;
+        }
+        return chef.disk.ambers.filter(function(slot) {
+            return slot && slot.type === 3;
         }).length;
     }
 
@@ -431,6 +765,86 @@
         }).join('，');
     }
 
+    function getGreenAmberSummaryFromChef(chef) {
+        var counter = {};
+        var order = [];
+        var filledSlots = 0;
+        var greenSlots = getGreenAmberSlotCountFromChef(chef);
+
+        if (!greenSlots || !chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return greenSlots ? '空' : '';
+        }
+
+        chef.disk.ambers.forEach(function(slot) {
+            var name;
+            if (!slot || slot.type !== 2) {
+                return;
+            }
+            name = slot.data && slot.data.name ? String(slot.data.name) : '';
+            if (!name) {
+                return;
+            }
+            filledSlots++;
+            if (!counter[name]) {
+                counter[name] = 0;
+                order.push(name);
+            }
+            counter[name]++;
+        });
+
+        if (!greenSlots) {
+            return '无绿色心法盘';
+        }
+
+        if (!filledSlots) {
+            return '空';
+        }
+
+        return order.map(function(name) {
+            return name + '*' + counter[name];
+        }).join('，');
+    }
+
+    function getBlueAmberSummaryFromChef(chef) {
+        var counter = {};
+        var order = [];
+        var filledSlots = 0;
+        var blueSlots = getBlueAmberSlotCountFromChef(chef);
+
+        if (!blueSlots || !chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return blueSlots ? '空' : '';
+        }
+
+        chef.disk.ambers.forEach(function(slot) {
+            var name;
+            if (!slot || slot.type !== 3) {
+                return;
+            }
+            name = slot.data && slot.data.name ? String(slot.data.name) : '';
+            if (!name) {
+                return;
+            }
+            filledSlots++;
+            if (!counter[name]) {
+                counter[name] = 0;
+                order.push(name);
+            }
+            counter[name]++;
+        });
+
+        if (!blueSlots) {
+            return '无蓝色心法盘';
+        }
+
+        if (!filledSlots) {
+            return '空';
+        }
+
+        return order.map(function(name) {
+            return name + '*' + counter[name];
+        }).join('，');
+    }
+
     function getRedAmberSummaryFallback(rawChef, redAmberCount, redAmberSlotCount) {
         var diskSummary = getRedAmberSummaryFromChef(rawChef);
         if (diskSummary) {
@@ -457,6 +871,46 @@
         return '无红色心法盘';
     }
 
+    function getGreenAmberSummaryFallback(rawChef, greenAmberCount, greenAmberSlotCount) {
+        var diskSummary = getGreenAmberSummaryFromChef(rawChef);
+        if (diskSummary) {
+            return diskSummary;
+        }
+        if (rawChef && rawChef.greenAmberSummary) {
+            return String(rawChef.greenAmberSummary);
+        }
+        if (greenAmberSlotCount > 0) {
+            return '空';
+        }
+        if (greenAmberCount <= 0) {
+            return '无绿色心法盘';
+        }
+        if (greenAmberCount > 0) {
+            return '已配绿色遗玉*' + greenAmberCount;
+        }
+        return '无绿色心法盘';
+    }
+
+    function getBlueAmberSummaryFallback(rawChef, blueAmberCount, blueAmberSlotCount) {
+        var diskSummary = getBlueAmberSummaryFromChef(rawChef);
+        if (diskSummary) {
+            return diskSummary;
+        }
+        if (rawChef && rawChef.blueAmberSummary) {
+            return String(rawChef.blueAmberSummary);
+        }
+        if (blueAmberSlotCount > 0) {
+            return '空';
+        }
+        if (blueAmberCount <= 0) {
+            return '无蓝色心法盘';
+        }
+        if (blueAmberCount > 0) {
+            return '已配蓝色遗玉*' + blueAmberCount;
+        }
+        return '无蓝色心法盘';
+    }
+
     // 规范化保存的厨师结构，兼容旧字段名。
     function normalizeSavedChef(rawChef, areaName) {
         var chef = rawChef && typeof rawChef === 'object' ? rawChef : {};
@@ -465,19 +919,63 @@
             chef.redAmberSlotCount || chef.redAmberSlots || chef.redSlotCount || chef.redAmberTotal,
             getRedAmberSlotCountFromChef(chef)
         );
+        var greenAmberCount = toInt(chef.greenAmberCount || chef.greenAmber || chef.greenCount, 0);
+        var greenAmberSlotCount = toInt(
+            chef.greenAmberSlotCount || chef.greenAmberSlots || chef.greenSlotCount || chef.greenAmberTotal,
+            getGreenAmberSlotCountFromChef(chef)
+        );
+        var blueAmberCount = toInt(chef.blueAmberCount || chef.blueAmber || chef.blueCount, 0);
+        var blueAmberSlotCount = toInt(
+            chef.blueAmberSlotCount || chef.blueAmberSlots || chef.blueSlotCount || chef.blueAmberTotal,
+            getBlueAmberSlotCountFromChef(chef)
+        );
         return {
+            id: chef.id || chef.chefId || '',
             name: chef.name || chef.chefName || chef.nickName || '未知厨师',
             rarity: Math.max(0, Math.min(5, toInt(chef.rarity || chef.star || chef.stars || chef.grade, 0))),
             area: chef.area || chef.areaName || areaName || '',
-            collectionDetails: chef.collectionDetails || chef.chefCollectionDetails || chef.details || chef.desc || '',
+            prefix: getAreaGroupKeyByAreaName(chef.area || chef.areaName || areaName || ''),
+            collectionDetails: chef.collectionDetails || chef.detailText || chef.chefCollectionDetails || chef.details || chef.desc || '',
+            detailText: chef.detailText || chef.collectionDetails || chef.chefCollectionDetails || chef.details || chef.desc || '',
             isUltimate: toBoolean(chef.isUltimate || chef.ult || chef.ultimate || chef.cultivated),
             critChance: toInt(chef.critChance || chef.totalCritChance, 0),
             critMaterial: toInt(chef.critMaterial || chef.totalCritMaterial, 0),
             materialGain: toInt(chef.materialGain || chef.totalMaterialGain, 0),
             origin: chef.origin || chef.source || '',
+            valueLabel: chef.valueLabel || '',
+            rawValue: toInt(chef.rawValue, 0),
+            totalContribution: toInt(chef.totalContribution || chef.rawValue, 0),
+            collectionExpectation: +(Number(chef.collectionExpectation || 0).toFixed(2)),
+            materialExpectation: +(Number(chef.materialExpectation || 0).toFixed(2)),
+            equipId: String(chef.equipId || ''),
+            equipName: chef.equipName || '',
+            meatVal: toInt(chef.meatVal, 0),
+            fishVal: toInt(chef.fishVal, 0),
+            vegVal: toInt(chef.vegVal, 0),
+            creationVal: toInt(chef.creationVal, 0),
+            sweetVal: toInt(chef.sweetVal, 0),
+            sourVal: toInt(chef.sourVal, 0),
+            spicyVal: toInt(chef.spicyVal, 0),
+            saltyVal: toInt(chef.saltyVal, 0),
+            bitterVal: toInt(chef.bitterVal, 0),
+            tastyVal: toInt(chef.tastyVal, 0),
+            providerBonusMeat: toInt(chef.providerBonusMeat, 0),
+            providerBonusFish: toInt(chef.providerBonusFish, 0),
+            providerBonusVeg: toInt(chef.providerBonusVeg, 0),
+            providerBonusCreation: toInt(chef.providerBonusCreation, 0),
             redAmberCount: redAmberCount,
             redAmberSlotCount: redAmberSlotCount,
-            redAmberSummary: getRedAmberSummaryFallback(chef, redAmberCount, redAmberSlotCount)
+            redAmberSummary: getRedAmberSummaryFallback(chef, redAmberCount, redAmberSlotCount),
+            greenAmberCount: greenAmberCount,
+            greenAmberSlotCount: greenAmberSlotCount,
+            greenAmberSummary: getGreenAmberSummaryFallback(chef, greenAmberCount, greenAmberSlotCount),
+            blueAmberCount: blueAmberCount,
+            blueAmberSlotCount: blueAmberSlotCount,
+            blueAmberSummary: getBlueAmberSummaryFallback(chef, blueAmberCount, blueAmberSlotCount),
+            auraInfo: chef.auraInfo ? cloneData(chef.auraInfo) : null,
+            targetCondimentName: chef.targetCondimentName || '',
+            targetCondimentFlavorLabel: chef.targetCondimentFlavorLabel || '',
+            targetCondimentFlavorKey: chef.targetCondimentFlavorKey || ''
         };
     }
 
@@ -492,7 +990,7 @@
             return null;
         }
 
-        areaName = item.areaName || item.name || item.area || item.area_type || '';
+        areaName = normalizeCondAreaName(item.areaName || item.name || item.area || item.area_type || '');
         if (!areaName) {
             return null;
         }
@@ -506,7 +1004,15 @@
             id: (item.id !== null && typeof item.id !== 'undefined' ? String(item.id) : 'collection_saved') + '::' + storageIndex,
             areaName: areaName,
             areaGroupKey: getAreaGroupKeyByAreaName(areaName),
+            areaPrefix: item.areaPrefix || item.prefix || getAreaGroupKeyByAreaName(areaName),
             savedTime: savedTime,
+            totalValue: toInt(item.totalValue, 0),
+            capacity: toInt(item.capacity, 0),
+            people: toInt(item.people, 0),
+            insufficient: !!item.insufficient,
+            targetLabel: item.targetLabel || '',
+            targetCondimentName: item.targetCondimentName || '',
+            targetFlavorLabel: item.targetFlavorLabel || '',
             chefs: chefs,
             raw: item,
             storageIndex: storageIndex
@@ -678,7 +1184,7 @@
         state.areaEnabled.veg = loadBooleanSetting('veg_enabled', true);
         state.areaEnabled.jade = loadBooleanSetting('jade_enabled', true);
         state.areaEnabled.lab = loadBooleanSetting('lab_enabled', false);
-        state.areaEnabled.cond = false;
+        state.areaEnabled.cond = loadBooleanSetting('cond_enabled', false);
         syncUnifiedAreaOrder();
     }
 
@@ -731,6 +1237,23 @@
         }
 
         items.forEach(function(item, index) {
+            var peopleHtml = item.prefix === 'cond'
+                ? '<span class="collection-sort-static-value">5</span>'
+                : [
+                    '<button type="button" class="btn btn-default collection-sort-picker collection-sort-picker-people" data-id="', escapeHtml(item.id), '" data-kind="people" data-value="', escapeHtml(String(item.people)), '" data-options="', escapeHtml(DEFAULT_PEOPLE_OPTIONS.join(',')), '">',
+                        '<span class="collection-sort-picker-text">', escapeHtml(String(item.people)), '</span>',
+                        '<span class="caret"></span>',
+                    '</button>'
+                ].join('');
+            var capacityLabel = item.prefix === 'cond' ? '调料值' : '采集点';
+            var capacityHtml = item.prefix === 'lab' ? '' : (item.prefix === 'cond'
+                ? '<span class="collection-sort-static-value">' + escapeHtml(String(item.capacity)) + '</span>'
+                : [
+                    '<button type="button" class="btn btn-default collection-sort-picker collection-sort-picker-capacity" data-id="', escapeHtml(item.id), '" data-kind="capacity" data-value="', escapeHtml(String(item.capacity)), '" data-options="', escapeHtml(item.meta.capacityOptions.join(',')), '">',
+                        '<span class="collection-sort-picker-text">', escapeHtml(String(item.capacity)), '</span>',
+                        '<span class="caret"></span>',
+                    '</button>'
+                ].join(''));
             html += [
                 '<div class="collection-sort-item collection-sort-item-', escapeHtml(item.prefix), '" draggable="true" data-id="', escapeHtml(item.id), '">',
                     '<div class="collection-sort-item-main">',
@@ -738,17 +1261,9 @@
                         '<span class="collection-sort-name collection-sort-name-', escapeHtml(item.prefix), ' collection-sort-name-', escapeHtml(item.name), '">', escapeHtml(item.displayName), '</span>',
                         '<span class="collection-sort-divider">|</span>',
                         '<span class="collection-sort-label">人数</span>',
-                        '<button type="button" class="btn btn-default collection-sort-picker collection-sort-picker-people" data-id="', escapeHtml(item.id), '" data-kind="people" data-value="', escapeHtml(String(item.people)), '" data-options="', escapeHtml(DEFAULT_PEOPLE_OPTIONS.join(',')), '">',
-                            '<span class="collection-sort-picker-text">', escapeHtml(String(item.people)), '</span>',
-                            '<span class="caret"></span>',
-                        '</button>',
-                        item.prefix !== 'lab' ? '<span class="collection-sort-label">采集点</span>' : '',
-                        item.prefix !== 'lab' ? [
-                            '<button type="button" class="btn btn-default collection-sort-picker collection-sort-picker-capacity" data-id="', escapeHtml(item.id), '" data-kind="capacity" data-value="', escapeHtml(String(item.capacity)), '" data-options="', escapeHtml(item.meta.capacityOptions.join(',')), '">',
-                                '<span class="collection-sort-picker-text">', escapeHtml(String(item.capacity)), '</span>',
-                                '<span class="caret"></span>',
-                            '</button>'
-                        ].join('') : '',
+                        peopleHtml,
+                        item.prefix !== 'lab' ? '<span class="collection-sort-label">' + capacityLabel + '</span>' : '',
+                        capacityHtml,
                     '</div>',
                     '<div class="collection-sort-item-actions">',
                         '<div class="collection-sort-move-group">',
@@ -1164,6 +1679,42 @@
         ].join('');
     }
 
+    function getSavedCombinationTotalValue(combination) {
+        if (toInt(combination.totalValue, 0) > 0) {
+            return toInt(combination.totalValue, 0);
+        }
+        if (isLabAreaName(combination.areaName)) {
+            return combination.chefs.reduce(function(total, chef) {
+                return total + toInt(chef.totalContribution || chef.rawValue, 0);
+            }, 0);
+        }
+        return combination.chefs.reduce(function(total, chef) {
+            return total + toInt(chef.rawValue, 0);
+        }, 0);
+    }
+
+    function getSavedCombinationResultData(combination) {
+        var prefix = combination.areaPrefix || combination.areaGroupKey || getAreaGroupKeyByAreaName(combination.areaName);
+        var firstChef = combination.chefs && combination.chefs.length ? combination.chefs[0] : null;
+        return {
+            areaName: combination.areaName,
+            groupKey: combination.areaGroupKey || prefix,
+            prefix: prefix,
+            people: toInt(combination.people, 0) || (combination.chefs || []).length,
+            capacity: toInt(combination.capacity, 0),
+            totalValue: getSavedCombinationTotalValue(combination),
+            insufficient: !!combination.insufficient,
+            targetLabel: combination.targetLabel || (firstChef && firstChef.valueLabel) || '',
+            targetCondimentName: combination.targetCondimentName || (firstChef && firstChef.targetCondimentName) || '',
+            targetFlavorLabel: combination.targetFlavorLabel || (firstChef && firstChef.targetCondimentFlavorLabel) || '',
+            chefs: (combination.chefs || []).map(function(chef) {
+                var clonedChef = cloneData(chef);
+                clonedChef.prefix = prefix;
+                return clonedChef;
+            })
+        };
+    }
+
     // 从实验室详情文本中回算“基础技法+光环加成”的总和。
     function getLabCombinationTotalSkill(combination) {
         return combination.chefs.reduce(function(total, chef) {
@@ -1178,16 +1729,17 @@
 
     // 生成“组合详情”弹窗HTML。
     function getCombinationDetailsDialogHtml(combination) {
-        var titleText = isLabAreaName(combination.areaName) ? (combination.areaName + '：' + getLabCombinationTotalSkill(combination) + ' - 组合详情') : (combination.areaName + ' - 组合详情');
-        var chefHtml = combination.chefs.length ? combination.chefs.map(function(chef) {
-            return getSavedChefRowHtml(chef);
-        }).join('') : '<div class="collection-team-detail-empty">该编队暂无厨师数据</div>';
+        var resultData = getSavedCombinationResultData(combination);
+        var cardHtml = combination.chefs.length ? getCollectionResultCardHtml(resultData, {
+            readOnly: true,
+            forceExpanded: true,
+            hideActions: true
+        }) : '<div class="collection-team-detail-empty">该编队暂无厨师数据</div>';
 
         return [
             '<div class="collection-team-detail-dialog">',
-                '<div class="collection-team-detail-title">', escapeHtml(titleText), '</div>',
                 '<div class="collection-team-detail-time">保存时间: ', escapeHtml(formatSavedTime(combination.savedTime, true)), '</div>',
-                '<div class="collection-team-detail-list">', chefHtml, '</div>',
+                '<div class="collection-team-detail-list is-result-layout">', cardHtml, '</div>',
             '</div>'
         ].join('');
     }
@@ -1717,6 +2269,13 @@
             if (loadBooleanSetting('useJadeGoldenSilkBoots', false)) {
                 configs.push({ equipId: '64', defaultExpectation: 8 });
             }
+        } else if (areaPrefix === 'cond') {
+            if (loadBooleanSetting('useCondSilverShoes', false)) {
+                configs.push({ equipId: '65', defaultExpectation: 4 });
+            }
+            if (loadBooleanSetting('useCondGoldenSilkBoots', false)) {
+                configs.push({ equipId: '64', defaultExpectation: 8 });
+            }
         }
 
         return configs;
@@ -1826,6 +2385,25 @@
         return false;
     }
 
+    function applyCondEquipIfNeeded(chef, context, areaName) {
+        var condSelection = getCondAreaSelection(areaName);
+        var equip150;
+
+        if (!context.applyEquip || !loadBooleanSetting('useCondEquip150', false) || !condSelection) {
+            return false;
+        }
+
+        equip150 = getCondEquip150(context, condSelection.flavorKey);
+        if (!equip150) {
+            return false;
+        }
+
+        chef.equip = equip150;
+        chef.equipId = equip150.equipId;
+        chef.equipDisp = equip150.disp;
+        return true;
+    }
+
     // 统一调用 setDataForChef 进行重算，确保技能/厨具/心法盘效果生效。
     function recalculateChefDataWithOptions(chef, chefPoolData, options) {
         options = options || {};
@@ -1872,6 +2450,21 @@
         return null;
     }
 
+    function getSkillById(context, skillId) {
+        var skills = (context && context.rule && context.rule.skills) || (context && context.gameData && context.gameData.skills) || [];
+        var skillMap = context.__collectionSkillMap;
+        if (!skillMap) {
+            skillMap = {};
+            skills.forEach(function(skill) {
+                if (skill && typeof skill.skillId !== 'undefined' && skill.skillId !== null) {
+                    skillMap[String(skill.skillId)] = skill;
+                }
+            });
+            context.__collectionSkillMap = skillMap;
+        }
+        return skillMap[String(skillId || '')] || null;
+    }
+
     // 获取实验室对应技法的150厨具。
     function getLabEquip150(context, areaName) {
         // 根据地区名称确定技法类型，然后找到对应的150厨具
@@ -1897,6 +2490,51 @@
         }
 
         return getEquipById(context, equipId);
+    }
+
+    function getCondEquip150(context, flavorKey) {
+        var targetEffectType = String(flavorKey || '');
+        var condEquip150Map = context.__condEquip150Map;
+
+        if (!targetEffectType || targetEffectType === 'Fixed') {
+            return null;
+        }
+
+        if (!condEquip150Map) {
+            var equips = (context && context.rule && context.rule.equips) || (context && context.gameData && context.gameData.equips) || [];
+            condEquip150Map = {};
+
+            equips.forEach(function(equip) {
+                var skillIds = equip && Array.isArray(equip.skill) ? equip.skill : [];
+                skillIds.forEach(function(skillId) {
+                    var skill = getSkillById(context, skillId);
+                    var effects = skill && Array.isArray(skill.effect) ? skill.effect : [];
+
+                    effects.forEach(function(effect) {
+                        var effectType = String(effect && effect.type || '');
+                        if (!effectType || effectType === 'Fixed') {
+                            return;
+                        }
+                        if (String(effect && effect.condition || '') !== 'Self') {
+                            return;
+                        }
+                        if (String(effect && effect.cal || '') !== 'Abs') {
+                            return;
+                        }
+                        if (Number(effect && effect.value || 0) < 150) {
+                            return;
+                        }
+                        if (!condEquip150Map[effectType]) {
+                            condEquip150Map[effectType] = equip;
+                        }
+                    });
+                });
+            });
+
+            context.__condEquip150Map = condEquip150Map;
+        }
+
+        return condEquip150Map[targetEffectType] || null;
     }
 
     // 获取实验室对应技法的100新手厨具。
@@ -1944,6 +2582,245 @@
 
     function getLabAmberEffectType(areaName) {
         return getLabTechniqueEffectType(areaName);
+    }
+
+    function getPreferredCollectionTargetTypeForChef(chef) {
+        var candidates = [
+            { key: 'meat', value: toInt(chef && chef.meatVal, 0) },
+            { key: 'fish', value: toInt(chef && chef.fishVal, 0) },
+            { key: 'veg', value: toInt(chef && chef.vegVal, 0) },
+            { key: 'creation', value: toInt(chef && chef.creationVal, 0) }
+        ];
+
+        candidates.sort(function(left, right) {
+            if (right.value !== left.value) {
+                return right.value - left.value;
+            }
+            return 0;
+        });
+
+        return candidates[0] ? candidates[0].key : 'creation';
+    }
+
+    function amberHasCondimentEffect(amber, flavorKey) {
+        var targetEffectType = flavorKey && String(flavorKey) !== 'Fixed' ? String(flavorKey) : '';
+        if (!amber || !Array.isArray(amber.allEffect)) {
+            return false;
+        }
+
+        return amber.allEffect.some(function(effects) {
+            return (effects || []).some(function(effect) {
+                var effectType = String(effect && effect.type || '');
+                if (!effectType || !COND_FLAVOR_CONFIG[effectType]) {
+                    return false;
+                }
+                return !targetEffectType || effectType === targetEffectType;
+            });
+        });
+    }
+
+    function getEffectAdditionGain(baseValue, addition) {
+        var absValue = addition && addition.abs ? Number(addition.abs) : 0;
+        var percentValue = addition && addition.percent ? Number(addition.percent) : 0;
+        return +(((Number(baseValue) + absValue) * (1 + percentValue / 100)) - Number(baseValue)).toFixed(4);
+    }
+
+    function getAmberFlavorAddition(amber, chef, diskLevel, flavorKey) {
+        var addition = { abs: 0, percent: 0 };
+        var flavorMeta = getCondFlavorConfig(flavorKey);
+        var effects;
+
+        if (!amber || !chef || !flavorMeta || !Array.isArray(amber.allEffect)) {
+            return addition;
+        }
+
+        effects = amber.allEffect[Math.max(0, toInt(diskLevel, 1) - 1)] || [];
+        effects.forEach(function(effect) {
+            if (!effect || String(effect.type || '') !== flavorMeta.effectType) {
+                return;
+            }
+            if (effect.tag && (!Array.isArray(chef.tags) || chef.tags.indexOf(effect.tag) < 0)) {
+                return;
+            }
+            if (String(effect.cal || '') === 'Percent') {
+                addition.percent += Number(effect.value || 0);
+            } else {
+                addition.abs += Number(effect.value || 0);
+            }
+        });
+
+        return addition;
+    }
+
+    function autoApplyCondAmberIfNeeded(chef, chefPoolData, areaName) {
+        var condSelection = getCondAreaSelection(areaName);
+        var ambers;
+        var targetBaseValue;
+        var matched = false;
+
+        if (chefPoolData.context.applyAmbers || !loadBooleanSetting('useCondAutoAmber', false) || !chef || !chef.disk || !Array.isArray(chef.disk.ambers) || !condSelection || !condSelection.field) {
+            return false;
+        }
+
+        ambers = getAmberListForContext(chefPoolData.context);
+        targetBaseValue = getCondFlavorValue(chef, condSelection.flavorKey);
+        chef.__autoCondAmberDisp = '';
+
+        chef.disk.ambers.forEach(function(slot) {
+            var bestAmber = null;
+            var bestGain = 0;
+            var candidates;
+
+            if (!slot) {
+                return;
+            }
+
+            slot.data = null;
+            candidates = ambers.filter(function(amber) {
+                return amber && amber.type === slot.type && toInt(amber.rarity, 0) === 3 && amberHasCondimentEffect(amber, condSelection.flavorKey);
+            });
+
+            candidates.forEach(function(amber) {
+                var addition = getAmberFlavorAddition(amber, chef, chef.disk.level || 1, condSelection.flavorKey);
+                var gain = getEffectAdditionGain(targetBaseValue, addition);
+                if (gain > bestGain) {
+                    bestGain = gain;
+                    bestAmber = amber;
+                }
+            });
+
+            if (bestAmber) {
+                slot.data = bestAmber;
+                matched = true;
+            }
+        });
+
+        if (!matched) {
+            return false;
+        }
+
+        chef.__autoCondAmberDisp = chef.disk.ambers.map(function(slot) {
+            return slot && slot.data && slot.data.name ? slot.data.name : '';
+        }).filter(function(name) {
+            return !!name;
+        }).join('/');
+
+        recalculateChefData(chef, chefPoolData, true);
+        return true;
+    }
+
+    function autoApplyCondAmberForGapIfNeeded(chef, chefPoolData, areaName, targetGapValue) {
+        var condSelection = getCondAreaSelection(areaName);
+        var blueSlots;
+        var ambers;
+        var areaItem;
+        var matched = false;
+        var gapTarget = Number(targetGapValue || 0);
+
+        if (chefPoolData.context.applyAmbers || !loadBooleanSetting('useCondAutoAmber', false) || !chef || !chef.disk || !Array.isArray(chef.disk.ambers) || !condSelection || !condSelection.field || gapTarget <= 0) {
+            return false;
+        }
+
+        blueSlots = getChefBlueAmberSlotIndices(chef);
+        if (!blueSlots.length) {
+            return false;
+        }
+
+        ambers = getAmberListForContext(chefPoolData.context).filter(function(amber) {
+            var rarity = toInt(amber && amber.rarity, 0);
+            return amber && amber.type === 3 && rarity === 3 && amberHasCondimentEffect(amber, condSelection.flavorKey);
+        });
+        if (!ambers.length) {
+            return false;
+        }
+
+        areaItem = {
+            name: areaName,
+            prefix: 'cond',
+            people: COND_PEOPLE,
+            capacity: COND_CAPACITY
+        };
+
+        clearChefAmberSlotsByType(chef, 3);
+        recalculateChefData(chef, chefPoolData, true);
+
+        var baseMetric = calculateCollectionChefMetric(areaItem, chef);
+        var baseRawValue = Number(baseMetric.rawValue || 0);
+
+        blueSlots.some(function(slotIndex) {
+            var currentMetric = calculateCollectionChefMetric(areaItem, chef);
+            var currentGain = Number(currentMetric.rawValue || 0) - baseRawValue;
+            var bestAmber = null;
+            var bestGain = currentGain;
+            var bestOverflow = Number.POSITIVE_INFINITY;
+            var bestRawValue = Number(currentMetric.rawValue || 0);
+
+            if (currentGain >= gapTarget) {
+                return true;
+            }
+
+            ambers.forEach(function(amber) {
+                var trialChef = cloneData(chef);
+                var trialMetric;
+                var trialRawValue;
+                var trialGain;
+                var trialOverflow;
+
+                if (!trialChef.disk || !Array.isArray(trialChef.disk.ambers) || !trialChef.disk.ambers[slotIndex]) {
+                    return;
+                }
+
+                trialChef.disk.ambers[slotIndex].data = amber;
+                recalculateChefData(trialChef, chefPoolData, true);
+                trialMetric = calculateCollectionChefMetric(areaItem, trialChef);
+                trialRawValue = Number(trialMetric.rawValue || 0);
+                trialGain = trialRawValue - baseRawValue;
+                trialOverflow = trialGain - gapTarget;
+
+                if (trialGain <= bestGain) {
+                    return;
+                }
+
+                if (trialGain >= gapTarget) {
+                    if (bestGain < gapTarget ||
+                        trialOverflow < bestOverflow ||
+                        (trialOverflow === bestOverflow && trialRawValue > bestRawValue)) {
+                        bestAmber = amber;
+                        bestGain = trialGain;
+                        bestOverflow = trialOverflow;
+                        bestRawValue = trialRawValue;
+                    }
+                    return;
+                }
+
+                if (bestGain < gapTarget &&
+                    (trialGain > bestGain || (trialGain === bestGain && trialRawValue > bestRawValue))) {
+                    bestAmber = amber;
+                    bestGain = trialGain;
+                    bestRawValue = trialRawValue;
+                }
+            });
+
+            if (bestAmber && chef.disk && Array.isArray(chef.disk.ambers) && chef.disk.ambers[slotIndex]) {
+                chef.disk.ambers[slotIndex].data = bestAmber;
+                recalculateChefData(chef, chefPoolData, true);
+                matched = true;
+            }
+
+            return false;
+        });
+
+        if (!matched) {
+            return false;
+        }
+
+        chef.__autoCondAmberDisp = chef.disk.ambers.map(function(slot) {
+            return slot && slot.type === 3 && slot.data && slot.data.name ? slot.data.name : '';
+        }).filter(function(name) {
+            return !!name;
+        }).join('/');
+
+        return true;
     }
 
     function setChefEquip(chef, equip) {
@@ -2009,8 +2886,54 @@
         }) || null;
     }
 
+    function getCollectionResultChefEntry(areaName, chefId, chefName) {
+        var areaResult = getCollectionAreaResult(areaName);
+        var chefIndex = -1;
+        var chefItem = null;
+
+        if (areaResult && Array.isArray(areaResult.chefs)) {
+            chefIndex = areaResult.chefs.findIndex(function(chef) {
+                return !isEmptyCollectionChef(chef) && (String(chef.id || '') === String(chefId || '') || chef.name === chefName);
+            });
+            chefItem = chefIndex >= 0 ? areaResult.chefs[chefIndex] : null;
+        }
+
+        return {
+            areaResult: areaResult,
+            chefIndex: chefIndex,
+            chefItem: chefItem
+        };
+    }
+
     function isCollectionResultAreaCollapsed(areaName) {
         return !!(state.collapsedResultAreas && state.collapsedResultAreas[areaName]);
+    }
+
+    function getCollectionAmberTriggerAttrs(item, areaName) {
+        return [
+            ' data-area-name="', escapeHtml(areaName), '"',
+            ' data-chef-id="', escapeHtml(String(item && item.id || '')), '"',
+            ' data-chef-name="', escapeHtml(String(item && item.name || '')), '"'
+        ].join('');
+    }
+
+    function getCollectionAmberTriggerHtml(item, areaName, contentHtml, className) {
+        return [
+            '<button type="button" class="', className, ' collection-result-chef-amber-trigger"',
+            getCollectionAmberTriggerAttrs(item, areaName),
+            ' title="配置心法盘">',
+            contentHtml,
+            '</button>'
+        ].join('');
+    }
+
+    function buildCondAmberSummaryHtml(item) {
+        var hasBlueSlots = toInt(item && item.blueAmberSlotCount, 0) > 0;
+
+        if (hasBlueSlots) {
+            return '<span class="collection-result-chef-amber-part is-blue">' + escapeHtml(String(item && item.blueAmberSummary || '空')) + '</span>';
+        }
+        return '<span class="collection-result-chef-amber-part is-empty">无蓝色心法盘</span>';
     }
 
     function getCollectionChefFromPool(chefId, chefName, chefPoolData) {
@@ -2020,6 +2943,76 @@
         return chefPoolData.chefs.find(function(chef) {
             return String(chef.chefId || chef.id || '') === String(chefId || '') || chef.name === chefName;
         }) || null;
+    }
+
+    function serializeCollectionChefForSave(chef, areaName, chefPoolData) {
+        var sourceChef;
+        var savedChef;
+
+        if (!chef || isEmptyCollectionChef(chef)) {
+            return null;
+        }
+
+        sourceChef = chef.labBaseChef || getCollectionChefFromPool(chef.id, chef.name, chefPoolData) || {};
+        savedChef = {
+            id: chef.id || sourceChef.chefId || sourceChef.id || '',
+            name: chef.name || sourceChef.name || '',
+            rarity: toInt(chef.rarity, 0),
+            area: areaName,
+            isUltimate: !!chef.isUltimate,
+            collectionDetails: chef.collectionDetails || chef.detailText || '',
+            detailText: chef.detailText || chef.collectionDetails || '',
+            critChance: toInt(chef.critChance, 0),
+            critMaterial: toInt(chef.critMaterial, 0),
+            materialGain: toInt(chef.materialGain, 0),
+            origin: chef.origin || sourceChef.origin || sourceChef.source || '',
+            redAmberCount: toInt(chef.redAmberCount, 0),
+            redAmberSlotCount: toInt(chef.redAmberSlotCount, 0),
+            redAmberSummary: chef.redAmberSummary || '',
+            greenAmberCount: toInt(chef.greenAmberCount, 0),
+            greenAmberSlotCount: toInt(chef.greenAmberSlotCount, 0),
+            greenAmberSummary: chef.greenAmberSummary || '',
+            blueAmberCount: toInt(chef.blueAmberCount, 0),
+            blueAmberSlotCount: toInt(chef.blueAmberSlotCount, 0),
+            blueAmberSummary: chef.blueAmberSummary || '',
+            valueLabel: chef.valueLabel || '',
+            rawValue: toInt(chef.rawValue, 0),
+            totalContribution: toInt(chef.totalContribution || chef.rawValue, 0),
+            collectionExpectation: +(Number(chef.collectionExpectation || 0).toFixed(2)),
+            materialExpectation: +(Number(chef.materialExpectation || 0).toFixed(2)),
+            equipId: String(chef.equipId || ''),
+            equipName: chef.equipName || '',
+            disk: chef.disk ? cloneData(chef.disk) : null,
+            diskDisp: chef.diskDisp || '',
+            meatVal: toInt(chef.meatVal, 0),
+            fishVal: toInt(chef.fishVal, 0),
+            vegVal: toInt(chef.vegVal, 0),
+            creationVal: toInt(chef.creationVal, 0),
+            sweetVal: toInt(chef.sweetVal, 0),
+            sourVal: toInt(chef.sourVal, 0),
+            spicyVal: toInt(chef.spicyVal, 0),
+            saltyVal: toInt(chef.saltyVal, 0),
+            bitterVal: toInt(chef.bitterVal, 0),
+            tastyVal: toInt(chef.tastyVal, 0),
+            targetCondimentName: chef.targetCondimentName || '',
+            targetCondimentFlavorLabel: chef.targetCondimentFlavorLabel || '',
+            targetCondimentFlavorKey: chef.targetCondimentFlavorKey || '',
+            providerBonusMeat: toInt(chef.providerBonusMeat, 0),
+            providerBonusFish: toInt(chef.providerBonusFish, 0),
+            providerBonusVeg: toInt(chef.providerBonusVeg, 0),
+            providerBonusCreation: toInt(chef.providerBonusCreation, 0),
+            teamBonusRawValue: toInt(chef.teamBonusRawValue, 0),
+            teamBonusMeat: toInt(chef.teamBonusMeat, 0),
+            teamBonusFish: toInt(chef.teamBonusFish, 0),
+            teamBonusVeg: toInt(chef.teamBonusVeg, 0),
+            teamBonusCreation: toInt(chef.teamBonusCreation, 0)
+        };
+
+        if (chef.auraInfo) {
+            savedChef.auraInfo = cloneData(chef.auraInfo);
+        }
+
+        return savedChef;
     }
 
     function buildInitialCollectionEquipOptions(item) {
@@ -2106,6 +3099,7 @@
         var baseRawValue = 0;
         var options = selectedEquipId ? [] : [buildHiddenCollectionNoEquipOption()];
         var candidateOptions = [];
+        var currentDiskState = item && item.disk ? cloneData(item.disk) : null;
 
         if (!chefPoolData) {
             chefPoolData = buildCollectionChefPool();
@@ -2129,7 +3123,12 @@
             return options;
         }
 
-        noEquipResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, '');
+        noEquipResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, '', currentDiskState ? {
+            disk: currentDiskState,
+            applyAmbers: true,
+            skipLabAutoAmber: true,
+            skipGreenAutoAmber: true
+        } : null);
         if (noEquipResult) {
             baseExpectation = Number(noEquipResult.collectionExpectation || 0);
             baseRawValue = toInt(noEquipResult.rawValue, 0);
@@ -2137,7 +3136,12 @@
 
         equips.forEach(function(equip) {
             var equipId = String(equip.equipId || '');
-            var trialResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, equipId);
+            var trialResult = buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, equipId, currentDiskState ? {
+                disk: currentDiskState,
+                applyAmbers: true,
+                skipLabAutoAmber: true,
+                skipGreenAutoAmber: true
+            } : null);
             var equipName = String(equip.name || equip.disp || ('厨具' + equipId));
             var skillText = String(equip.skillDisp || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
             var originText = String(equip.origin || '').replace(/<br>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -2181,6 +3185,13 @@
                 }
                 if (right.rawValue !== left.rawValue) {
                     return right.rawValue - left.rawValue;
+                }
+            } else if (areaItem.prefix === 'cond') {
+                if (right.rawValue !== left.rawValue) {
+                    return right.rawValue - left.rawValue;
+                }
+                if (right.expectation !== left.expectation) {
+                    return right.expectation - left.expectation;
                 }
             } else {
                 if (right.expectation !== left.expectation) {
@@ -2273,6 +3284,7 @@
                 '<select class="selectpicker collection-result-equip-select" data-width="fit" data-container="body"',
                     ' data-live-search="true" data-live-search-style="commaSplitContains" data-live-search-placeholder="查找"',
                     ' data-none-results-text="没有找到" data-size="12"',
+                    ' data-dropup-auto="false"',
                     ' data-done-button="true" data-done-button-text="关闭"',
                     ' data-area-name="', escapeHtml(areaName), '"',
                     ' data-chef-id="', escapeHtml(String(item.id || '')), '"',
@@ -2280,6 +3292,15 @@
                     ' data-current-value="', escapeHtml(String(options[0].value || '')), '">',
                     optionsHtml,
                 '</select>',
+            '</div>'
+        ].join('');
+    }
+
+    function getCollectionEquipStaticHtml(item) {
+        var equipName = String(item && item.equipName ? item.equipName : '无厨具');
+        return [
+            '<div class="collection-result-equip-select-wrap is-readonly">',
+                '<span class="collection-result-equip-static">', escapeHtml(equipName), '</span>',
             '</div>'
         ].join('');
     }
@@ -2468,6 +3489,10 @@
         });
     }
 
+    function isCollectionMobileViewport() {
+        return Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0) <= 767;
+    }
+
     function calculateCollectionChefMetric(areaItem, chef) {
         chef.__queryAreaName = areaItem.name;
         chef.__queryMeta = getChefMaterialSkillMeta(chef);
@@ -2477,25 +3502,64 @@
         return getAreaQueryMetric(areaItem, chef);
     }
 
+    function getCondBlueAmberFlavorGain(chef, chefPoolData, areaName) {
+        var areaItem;
+        var chefWithoutBlueAmber;
+        var withBlueMetric;
+        var withoutBlueMetric;
+
+        if (!chef || !chefPoolData || !getChefBlueAmberSlotIndices(chef).length) {
+            return 0;
+        }
+
+        areaItem = {
+            name: areaName,
+            prefix: 'cond',
+            people: COND_PEOPLE,
+            capacity: COND_CAPACITY
+        };
+        withBlueMetric = calculateCollectionChefMetric(areaItem, chef);
+
+        chefWithoutBlueAmber = cloneData(chef);
+        clearChefAmberSlotsByType(chefWithoutBlueAmber, 3);
+        recalculateChefData(chefWithoutBlueAmber, chefPoolData, true);
+        withoutBlueMetric = calculateCollectionChefMetric(areaItem, chefWithoutBlueAmber);
+
+        return +Math.max(0, Number(withBlueMetric.rawValue || 0) - Number(withoutBlueMetric.rawValue || 0)).toFixed(2);
+    }
+
     function buildCollectionChefResultForManualEquip(baseChef, areaItem, chefPoolData, equipId) {
+        var options = arguments.length > 4 ? arguments[4] : null;
         var clonedChef = cloneData(baseChef);
         var nextEquip = equipId ? getEquipById(chefPoolData.context, equipId) : null;
         var metric;
         var result;
         var auraInfo;
 
+        options = options || {};
+
         if (equipId && !nextEquip) {
             return null;
+        }
+
+        if (options.disk) {
+            clonedChef.disk = cloneData(options.disk);
+            if (typeof window.GetDiskDisp === 'function') {
+                clonedChef.diskDisp = window.GetDiskDisp(clonedChef.disk);
+            }
         }
 
         setChefEquip(clonedChef, nextEquip);
         recalculateChefDataWithOptions(clonedChef, chefPoolData, {
             equip: nextEquip,
-            applyEquip: true
+            applyEquip: true,
+            applyAmbers: typeof options.applyAmbers === 'boolean' ? options.applyAmbers : undefined
         });
 
         if (areaItem.prefix === 'lab') {
-            autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            if (!options.skipLabAutoAmber) {
+                autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            }
             metric = hydrateChefMetricForArea(clonedChef, chefPoolData, areaItem.name);
             auraInfo = checkAuraChef(clonedChef, areaItem.name, chefPoolData.context);
             if (auraInfo.isAura && (auraInfo.auraType === areaItem.name || auraInfo.auraType === '全技法')) {
@@ -2514,6 +3578,12 @@
             return enrichLabChefResult(result, clonedChef, areaItem, chefPoolData, auraInfo);
         }
 
+        if (areaItem.prefix === 'jade' && !options.skipGreenAutoAmber) {
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'jade');
+        } else if (areaItem.prefix === 'veg' && !options.skipGreenAutoAmber) {
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'veg');
+        }
+
         metric = calculateCollectionChefMetric(areaItem, clonedChef);
         return buildSelectedCollectionChef({
             chef: clonedChef,
@@ -2521,7 +3591,10 @@
             label: metric.label,
             detailText: metric.detailText,
             expectation: metric.expectation,
-            meta: metric.meta
+            meta: metric.meta,
+            targetCondimentName: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).name || '') : '',
+            targetCondimentFlavorLabel: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).flavorLabel || '') : '',
+            targetCondimentFlavorKey: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).flavorKey || '') : ''
         }, areaItem);
     }
 
@@ -2556,10 +3629,10 @@
             return;
         }
 
-        var areaResult = state.queryResults.items.find(function(result) {
-            return result.areaName === areaName;
-        });
-        var chefIndex;
+        var targetEntry = getCollectionResultChefEntry(areaName, chefId, chefName);
+        var areaResult = targetEntry.areaResult;
+        var chefIndex = targetEntry.chefIndex;
+        var currentChefItem = targetEntry.chefItem;
         var chefPoolData;
         var baseChef;
         var nextChefResult;
@@ -2567,15 +3640,11 @@
         if (!areaResult) {
             return;
         }
-
-        chefIndex = (areaResult.chefs || []).findIndex(function(chef) {
-            return !isEmptyCollectionChef(chef) && (String(chef.id || '') === String(chefId || '') || chef.name === chefName);
-        });
         if (chefIndex < 0) {
             return;
         }
 
-        chefPoolData = buildCollectionChefPool();
+        chefPoolData = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool : buildCollectionChefPool();
         if (chefPoolData.error) {
             alert(chefPoolData.error);
             return;
@@ -2590,7 +3659,12 @@
             return;
         }
 
-        nextChefResult = buildCollectionChefResultForManualEquip(baseChef, createAreaItemFromResult(areaResult), chefPoolData, String(equipId || ''));
+        nextChefResult = buildCollectionChefResultForManualEquip(baseChef, createAreaItemFromResult(areaResult), chefPoolData, String(equipId || ''), currentChefItem && currentChefItem.disk ? {
+            disk: currentChefItem.disk,
+            applyAmbers: true,
+            skipLabAutoAmber: true,
+            skipGreenAutoAmber: true
+        } : null);
         if (!nextChefResult) {
             alert('未找到对应厨具');
             return;
@@ -2599,6 +3673,353 @@
         areaResult.chefs[chefIndex] = nextChefResult;
         updateAreaResultSummary(areaResult, chefPoolData);
         render();
+    }
+
+    function updateCollectionChefDisk(areaName, chefId, chefName, diskState) {
+        if (state.queryLoading || !diskState) {
+            return false;
+        }
+        if (!state.queryResults || !state.queryResults.items) {
+            return false;
+        }
+
+        var targetEntry = getCollectionResultChefEntry(areaName, chefId, chefName);
+        var areaResult = targetEntry.areaResult;
+        var chefIndex = targetEntry.chefIndex;
+        var currentChefItem = targetEntry.chefItem;
+        var chefPoolData;
+        var baseChef;
+        var nextChefResult;
+
+        if (!areaResult || chefIndex < 0 || !currentChefItem) {
+            return false;
+        }
+
+        chefPoolData = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool : buildCollectionChefPool();
+        if (chefPoolData.error) {
+            alert(chefPoolData.error);
+            return false;
+        }
+        state.queryChefPool = chefPoolData;
+
+        baseChef = chefPoolData.chefs.find(function(chef) {
+            return String(chef.chefId || chef.id || '') === String(chefId || '') || chef.name === chefName;
+        });
+        if (!baseChef) {
+            alert('未找到厨师基础数据');
+            return false;
+        }
+
+        nextChefResult = buildCollectionChefResultForManualEquip(
+            baseChef,
+            createAreaItemFromResult(areaResult),
+            chefPoolData,
+            String(currentChefItem.equipId || ''),
+            {
+                disk: diskState,
+                applyAmbers: true,
+                skipLabAutoAmber: true,
+                skipGreenAutoAmber: true
+            }
+        );
+        if (!nextChefResult) {
+            return false;
+        }
+
+        areaResult.chefs[chefIndex] = nextChefResult;
+        updateAreaResultSummary(areaResult, chefPoolData);
+        render();
+        return true;
+    }
+
+    function buildCollectionDiskLevelOptions(disk) {
+        if (typeof window.getDiskLevelsOptions === 'function') {
+            return window.getDiskLevelsOptions(disk);
+        }
+        var options = [];
+        var maxLevel = toInt(disk && disk.maxLevel, 1);
+        var currentLevel = toInt(disk && disk.level, 1);
+        var level;
+        for (level = 1; level <= maxLevel; level++) {
+            options.push({
+                display: '心法盘等级 ' + level,
+                value: level,
+                selected: currentLevel === level
+            });
+        }
+        return options;
+    }
+
+    function amberHasCollectionAreaEffect(amber) {
+        var effectTypes = {
+            Material_Gain: true,
+            Material_Meat: true,
+            Material_Fish: true,
+            Material_Vegetable: true,
+            Material_Creation: true,
+            Meat: true,
+            Fish: true,
+            Vegetable: true,
+            Creation: true
+        };
+
+        if (!amber || !Array.isArray(amber.allEffect)) {
+            return false;
+        }
+
+        return amber.allEffect.some(function(effects) {
+            return (effects || []).some(function(effect) {
+                return !!(effect && effectTypes[String(effect.type || '')]);
+            });
+        });
+    }
+
+    function amberHasBlueCondimentEffect(amber) {
+        return amberHasCondimentEffect(amber, '');
+    }
+
+    function amberHasAnyEffectType(amber, effectTypes) {
+        if (!amber || !Array.isArray(amber.allEffect) || !effectTypes || !effectTypes.length) {
+            return false;
+        }
+
+        return amber.allEffect.some(function(effects) {
+            return (effects || []).some(function(effect) {
+                return !!(effect && effectTypes.indexOf(String(effect.type || '')) >= 0);
+            });
+        });
+    }
+
+    function getCollectionValueEffectType(valueKey) {
+        var mapping = {
+            meatVal: 'Meat',
+            fishVal: 'Fish',
+            vegVal: 'Vegetable',
+            creationVal: 'Creation'
+        };
+        return mapping[String(valueKey || '')] || '';
+    }
+
+    function getCollectionMaterialEffectType(valueKey) {
+        var mapping = {
+            meatVal: 'Material_Meat',
+            fishVal: 'Material_Fish',
+            vegVal: 'Material_Vegetable',
+            creationVal: 'Material_Creation'
+        };
+        return mapping[String(valueKey || '')] || '';
+    }
+
+    function amberHasJadeCollectionEffect(amber, areaName) {
+        var jadeTarget = getJadeTargetConfig(areaName);
+        var effectTypes = (jadeTarget.keys || []).map(function(key) {
+            return getCollectionValueEffectType(key);
+        }).filter(function(type) {
+            return !!type;
+        });
+
+        if (!amber || amber.type !== 2) {
+            return false;
+        }
+
+        return amberHasAnyEffectType(amber, effectTypes);
+    }
+
+    function amberHasVegMaterialEffect(amber, areaName) {
+        var vegTarget = getVegTargetConfig(areaName);
+        var effectTypes = ['Material_Gain'];
+        var typedEffectType = getCollectionMaterialEffectType(vegTarget.key);
+
+        if (typedEffectType) {
+            effectTypes.push(typedEffectType);
+        }
+
+        if (!amber || amber.type !== 2) {
+            return false;
+        }
+
+        return amberHasAnyEffectType(amber, effectTypes);
+    }
+
+    function getCollectionAreaAmberCandidates(ambers, slot, areaItem) {
+        var currentAmberId = slot && slot.data && slot.data.amberId ? String(slot.data.amberId) : '';
+
+        return (ambers || []).filter(function(amber) {
+            var matchedBySlotType = false;
+            var amberRarity = toInt(amber && amber.rarity, 0);
+            if (slot && amber.type !== slot.type) {
+                return false;
+            }
+
+            if (!amber || amberRarity < 1 || amberRarity > 3) {
+                return currentAmberId && String(amber && amber.amberId) === currentAmberId;
+            }
+
+            if (slot && slot.type === 1) {
+                matchedBySlotType = amberHasAnyLabTechniqueEffect(amber);
+            } else if (slot && slot.type === 2) {
+                matchedBySlotType = amberHasCollectionAreaEffect(amber);
+            } else if (slot && slot.type === 3) {
+                matchedBySlotType = amberHasBlueCondimentEffect(amber);
+            }
+
+            if (matchedBySlotType) {
+                return true;
+            }
+
+            return currentAmberId && String(amber.amberId) === currentAmberId;
+        });
+    }
+
+    function buildCollectionAmberOptions(ambers, slot, areaItem) {
+        var filteredAmbers = getCollectionAreaAmberCandidates(ambers, slot, areaItem);
+
+        if (typeof window.getAmbersOptions === 'function') {
+            return window.getAmbersOptions(filteredAmbers, slot, true);
+        }
+        return [{
+            display: '无遗玉',
+            value: '',
+            class: 'hidden'
+        }].concat(filteredAmbers.map(function(amber) {
+            return {
+                display: amber.name,
+                value: amber.amberId,
+                selected: !!(slot && slot.data && String(slot.data.amberId) === String(amber.amberId))
+            };
+        }));
+    }
+
+    function getCollectionAmberInfo(amberId, ambers) {
+        if (typeof window.getAmberInfo === 'function') {
+            return window.getAmberInfo(amberId, ambers);
+        }
+        return (ambers || []).find(function(amber) {
+            return String(amber.amberId) === String(amberId || '');
+        }) || null;
+    }
+
+    function updateCollectionDiskModalAmberDisplay(slotIndex, amber, level) {
+        if (typeof window.updateModalAmberDisplay === 'function') {
+            window.updateModalAmberDisplay(slotIndex, amber, level);
+            return;
+        }
+        $('#disk-modal .amber-box:eq(' + slotIndex + ') .content').html(amber && amber.name ? escapeHtml(amber.name) : '');
+    }
+
+    function showCollectionChefDiskDialog(areaName, chefId, chefName) {
+        var targetEntry;
+        var areaResult;
+        var chefItem;
+        var chefPoolData;
+        var baseChef;
+        var workingDisk;
+        var ambers;
+        var $modal;
+        var $levelSelect;
+
+        if (state.queryLoading) {
+            return;
+        }
+
+        targetEntry = getCollectionResultChefEntry(areaName, chefId, chefName);
+        areaResult = targetEntry.areaResult;
+        chefItem = targetEntry.chefItem;
+        if (!areaResult || !chefItem) {
+            return;
+        }
+
+        chefPoolData = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool : buildCollectionChefPool();
+        if (!chefPoolData || chefPoolData.error) {
+            alert(chefPoolData && chefPoolData.error ? chefPoolData.error : '未找到查询数据');
+            return;
+        }
+        state.queryChefPool = chefPoolData;
+
+        baseChef = getCollectionChefFromPool(chefId, chefName, chefPoolData);
+        workingDisk = chefItem.disk ? cloneData(chefItem.disk) : (baseChef && baseChef.disk ? cloneData(baseChef.disk) : null);
+        if (!workingDisk || !Array.isArray(workingDisk.ambers)) {
+            alert('该厨师暂无心法盘数据');
+            return;
+        }
+
+        if (!workingDisk.level) {
+            workingDisk.level = toInt(workingDisk.maxLevel, 1) || 1;
+        }
+        ambers = getAmberListForContext(chefPoolData.context);
+        $modal = $('#disk-modal');
+        if (!$modal.length) {
+            alert('未找到心法盘配置弹窗');
+            return;
+        }
+
+        function syncDiskToResult() {
+            updateCollectionChefDisk(areaName, chefId, chefName, cloneData(workingDisk));
+        }
+
+        function bindAmberSlot($select, slotIndex) {
+            var slot = workingDisk.ambers[slotIndex];
+            var options = buildCollectionAmberOptions(ambers, slot, {
+                prefix: areaResult.prefix,
+                name: areaResult.areaName
+            });
+            var amberButtonClass = typeof window.getAmberBtnClass === 'function' ? window.getAmberBtnClass(slot.type) : 'btn-default';
+
+            $select.closest('.amber-box')
+                .removeClass('hidden')
+                .find('.dropdown-toggle')
+                .removeClass('btn-primary btn-success btn-danger btn-default')
+                .addClass(amberButtonClass);
+
+            $select.html(typeof window.getOptionsString === 'function' ? window.getOptionsString(options) : '')
+                .selectpicker('refresh');
+            $select.off('changed.bs.select.collectionResultDisk').on('changed.bs.select.collectionResultDisk', function() {
+                var amberId = $(this).val();
+                var amberData = amberId ? getCollectionAmberInfo(Number(amberId) || amberId, ambers) : null;
+                workingDisk.ambers[slotIndex].data = amberData;
+                updateCollectionDiskModalAmberDisplay(slotIndex, amberData, workingDisk.level);
+                syncDiskToResult();
+            });
+            $select.selectpicker('val', slot && slot.data && slot.data.amberId ? String(slot.data.amberId) : '');
+            updateCollectionDiskModalAmberDisplay(slotIndex, slot ? slot.data : null, workingDisk.level);
+        }
+
+        $modal.find('.chef-name').html(chefItem.name);
+        $levelSelect = $modal.find('select.select-chef-disk-level');
+        if (!$levelSelect.data('selectpicker')) {
+            $levelSelect.selectpicker();
+        }
+        $levelSelect.html(typeof window.getOptionsString === 'function' ? window.getOptionsString(buildCollectionDiskLevelOptions(workingDisk)) : '')
+            .selectpicker('refresh')
+            .selectpicker('val', String(workingDisk.level || 1));
+        $levelSelect.off('changed.bs.select.collectionResultDisk').on('changed.bs.select.collectionResultDisk', function() {
+            workingDisk.level = Number($(this).val()) || 1;
+            workingDisk.level = Math.max(1, Math.min(workingDisk.level, toInt(workingDisk.maxLevel, workingDisk.level)));
+            workingDisk.ambers.forEach(function(slot, slotIndex) {
+                updateCollectionDiskModalAmberDisplay(slotIndex, slot ? slot.data : null, workingDisk.level);
+            });
+            syncDiskToResult();
+        });
+
+        $modal.find('select.select-chef-amber').each(function(index) {
+            var $select = $(this);
+            if (!$select.data('selectpicker')) {
+                $select.selectpicker();
+            }
+            if (index < workingDisk.ambers.length) {
+                bindAmberSlot($select, index);
+            } else {
+                $select.off('changed.bs.select.collectionResultDisk');
+                $select.closest('.amber-box').addClass('hidden');
+            }
+        });
+
+        $modal.off('hidden.bs.modal.collectionResultDisk').on('hidden.bs.modal.collectionResultDisk', function() {
+            $modal.find('select.select-chef-disk-level').off('changed.bs.select.collectionResultDisk');
+            $modal.find('select.select-chef-amber').off('changed.bs.select.collectionResultDisk');
+        });
+
+        $modal.modal('show');
     }
 
     function amberHasLabTechniqueEffect(amber, areaName) {
@@ -2614,6 +4035,27 @@
         });
     }
 
+    function amberHasAnyLabTechniqueEffect(amber) {
+        var techniqueEffectTypes = {
+            Stirfry: true,
+            Boil: true,
+            Knife: true,
+            Fry: true,
+            Bake: true,
+            Steam: true
+        };
+
+        if (!amber || !Array.isArray(amber.allEffect)) {
+            return false;
+        }
+
+        return amber.allEffect.some(function(effects) {
+            return (effects || []).some(function(effect) {
+                return !!(effect && techniqueEffectTypes[String(effect.type || '')]);
+            });
+        });
+    }
+
     function clearChefAmberSlots(chef) {
         if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
             return;
@@ -2625,12 +4067,47 @@
         });
     }
 
+    function clearChefAmberSlotsByType(chef, slotType) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return;
+        }
+        chef.disk.ambers.forEach(function(slot) {
+            if (slot && slot.type === slotType) {
+                slot.data = null;
+            }
+        });
+    }
+
     function getChefRedAmberSlotIndices(chef) {
         if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
             return [];
         }
         return chef.disk.ambers.reduce(function(indices, slot, index) {
             if (slot && slot.type === 1) {
+                indices.push(index);
+            }
+            return indices;
+        }, []);
+    }
+
+    function getChefGreenAmberSlotIndices(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return [];
+        }
+        return chef.disk.ambers.reduce(function(indices, slot, index) {
+            if (slot && slot.type === 2) {
+                indices.push(index);
+            }
+            return indices;
+        }, []);
+    }
+
+    function getChefBlueAmberSlotIndices(chef) {
+        if (!chef || !chef.disk || !Array.isArray(chef.disk.ambers)) {
+            return [];
+        }
+        return chef.disk.ambers.reduce(function(indices, slot, index) {
+            if (slot && slot.type === 3) {
                 indices.push(index);
             }
             return indices;
@@ -2701,6 +4178,108 @@
 
         Object.assign(chef, bestChef);
         return true;
+    }
+
+    function autoApplyAreaGreenAmberIfNeeded(chef, chefPoolData, areaName, areaPrefix) {
+        var greenSlots;
+        var ambers;
+        var candidateAmbers;
+        var areaItem;
+        var matched = false;
+
+        if (!chef || !chefPoolData || !chefPoolData.context || chefPoolData.context.applyAmbers) {
+            return false;
+        }
+
+        if (areaPrefix === 'jade' && !loadBooleanSetting('useJadeAutoAmber', false)) {
+            return false;
+        }
+        if (areaPrefix === 'veg' && !loadBooleanSetting('useVegAutoAmber', false)) {
+            return false;
+        }
+        if (areaPrefix !== 'jade' && areaPrefix !== 'veg') {
+            return false;
+        }
+
+        greenSlots = getChefGreenAmberSlotIndices(chef);
+        if (!greenSlots.length) {
+            return false;
+        }
+
+        ambers = getAmberListForContext(chefPoolData.context);
+        candidateAmbers = ambers.filter(function(amber) {
+            var rarity = toInt(amber && amber.rarity, 0);
+            if (!amber || amber.type !== 2 || rarity !== 3) {
+                return false;
+            }
+            return areaPrefix === 'jade'
+                ? amberHasJadeCollectionEffect(amber, areaName)
+                : amberHasVegMaterialEffect(amber, areaName);
+        });
+        if (!candidateAmbers.length) {
+            return false;
+        }
+
+        areaItem = {
+            name: areaName,
+            prefix: areaPrefix,
+            people: 0,
+            capacity: 0
+        };
+
+        clearChefAmberSlotsByType(chef, 2);
+        recalculateChefData(chef, chefPoolData, true);
+
+        greenSlots.forEach(function(slotIndex) {
+            var baseMetric = calculateCollectionChefMetric(areaItem, chef);
+            var basePrimary = areaPrefix === 'jade'
+                ? Number(baseMetric.rawValue || 0)
+                : Number((baseMetric.meta && baseMetric.meta.materialGain) || 0);
+            var baseSecondary = Number(baseMetric.expectation || 0);
+            var baseThird = Number(baseMetric.rawValue || 0);
+            var bestAmber = null;
+            var bestPrimary = basePrimary;
+            var bestSecondary = baseSecondary;
+            var bestThird = baseThird;
+
+            candidateAmbers.forEach(function(amber) {
+                var trialChef = cloneData(chef);
+                var trialMetric;
+                var trialPrimary;
+                var trialSecondary;
+                var trialThird;
+
+                if (!trialChef.disk || !Array.isArray(trialChef.disk.ambers) || !trialChef.disk.ambers[slotIndex]) {
+                    return;
+                }
+
+                trialChef.disk.ambers[slotIndex].data = amber;
+                recalculateChefData(trialChef, chefPoolData, true);
+                trialMetric = calculateCollectionChefMetric(areaItem, trialChef);
+                trialPrimary = areaPrefix === 'jade'
+                    ? Number(trialMetric.rawValue || 0)
+                    : Number((trialMetric.meta && trialMetric.meta.materialGain) || 0);
+                trialSecondary = Number(trialMetric.expectation || 0);
+                trialThird = Number(trialMetric.rawValue || 0);
+
+                if (trialPrimary > bestPrimary ||
+                    (trialPrimary === bestPrimary && trialSecondary > bestSecondary) ||
+                    (trialPrimary === bestPrimary && trialSecondary === bestSecondary && trialThird > bestThird)) {
+                    bestAmber = amber;
+                    bestPrimary = trialPrimary;
+                    bestSecondary = trialSecondary;
+                    bestThird = trialThird;
+                }
+            });
+
+            if (bestAmber && chef.disk && Array.isArray(chef.disk.ambers) && chef.disk.ambers[slotIndex]) {
+                chef.disk.ambers[slotIndex].data = bestAmber;
+                recalculateChefData(chef, chefPoolData, true);
+                matched = true;
+            }
+        });
+
+        return matched;
     }
 
     // 汇总厨师素材相关元数据：
@@ -2814,6 +4393,20 @@
 
         // 根据地区推断当前查询目标素材类型。
         function getTargetTypeFromAreaName(areaName) {
+            if (getAreaGroupKeyByAreaName(areaName) === 'cond') {
+                var typedCandidates = [
+                    { key: 'meat', value: materialGainMeat },
+                    { key: 'fish', value: materialGainFish },
+                    { key: 'veg', value: materialGainVeg },
+                    { key: 'creation', value: materialGainCreation }
+                ].sort(function(left, right) {
+                    return right.value - left.value;
+                });
+                if (typedCandidates[0] && typedCandidates[0].value > 0) {
+                    return typedCandidates[0].key;
+                }
+                return getPreferredCollectionTargetTypeForChef(chef);
+            }
             if (areaName === '池塘') {
                 return 'fish';
             }
@@ -2827,12 +4420,13 @@
         }
 
         var effectiveEquipEffects = getEffectiveEquipEffects();
+        var allowAmberMaterialEffects = getAreaGroupKeyByAreaName(String(chef.__queryAreaName || '')) === 'veg';
 
         scanEffects(chef.specialSkillEffect, chef.specialSkillDisp);
         scanEffects(activeSelfUltimateEffects, activeUltimateDesc);
         scanEffects(effectiveEquipEffects, chef.equip && (chef.equip.skillDisp || chef.equip.desc || ''));
 
-        if (chef.disk && Array.isArray(chef.disk.ambers)) {
+        if (allowAmberMaterialEffects && chef.disk && Array.isArray(chef.disk.ambers)) {
             chef.disk.ambers.forEach(function(slot) {
                 var levelEffects;
                 if (!slot || !slot.data || !slot.data.allEffect) {
@@ -2899,7 +4493,17 @@
                 return slot && slot.type === 1 && slot.data;
             }).length : 0,
             redAmberSlotCount: getRedAmberSlotCountFromChef(chef),
-            redAmberSummary: getRedAmberSummaryFromChef(chef)
+            redAmberSummary: getRedAmberSummaryFromChef(chef),
+            greenAmberCount: chef.disk && Array.isArray(chef.disk.ambers) ? chef.disk.ambers.filter(function(slot) {
+                return slot && slot.type === 2 && slot.data;
+            }).length : 0,
+            greenAmberSlotCount: getGreenAmberSlotCountFromChef(chef),
+            greenAmberSummary: getGreenAmberSummaryFromChef(chef),
+            blueAmberCount: chef.disk && Array.isArray(chef.disk.ambers) ? chef.disk.ambers.filter(function(slot) {
+                return slot && slot.type === 3 && slot.data;
+            }).length : 0,
+            blueAmberSlotCount: getBlueAmberSlotCountFromChef(chef),
+            blueAmberSummary: getBlueAmberSummaryFromChef(chef)
         };
     }
 
@@ -3453,10 +5057,11 @@
             score = rawValue * 1000000 + meta.redAmberCount * 10000 + toInt(chef.rarity, 0) * 100;
             detailText = label + ': ' + rawValue;
         } else {
-            label = '调料';
-            rawValue = 0;
-            score = 0;
-            detailText = '功能开发中，敬请期待';
+            var condSelection = getCondAreaSelection(areaItem.name);
+            label = condSelection ? (condSelection.name + '调料值') : '调料值';
+            rawValue = condSelection ? getCondFlavorValue(chef, condSelection.flavorKey) : 0;
+            score = rawValue * 1000000 + expectation * 1000 + meta.materialGain * 100 + toInt(chef.rarity, 0);
+            detailText = condSelection ? (condSelection.name + '（' + condSelection.flavorLabel + '）: ' + rawValue) : '未配置调料';
         }
 
         return {
@@ -3528,14 +5133,29 @@
             critMaterial: 0,
             critChance: 0,
             redAmberCount: 0,
+            greenAmberCount: 0,
+            greenAmberSlotCount: 0,
+            greenAmberSummary: '',
+            blueAmberCount: 0,
+            blueAmberSlotCount: 0,
+            blueAmberSummary: '',
             detailText: '',
-            valueLabel: areaPrefix === 'lab' ? '技法值' : '采集点',
+            valueLabel: areaPrefix === 'lab' ? '技法值' : (areaPrefix === 'cond' ? '调料值' : '采集点'),
             rawValue: 0,
             prefix: areaPrefix || '',
             meatVal: 0,
             fishVal: 0,
             vegVal: 0,
             creationVal: 0,
+            sweetVal: 0,
+            sourVal: 0,
+            spicyVal: 0,
+            saltyVal: 0,
+            bitterVal: 0,
+            tastyVal: 0,
+            targetCondimentName: '',
+            targetCondimentFlavorLabel: '',
+            targetCondimentFlavorKey: '',
             baseRawValue: 0,
             baseMeatVal: 0,
             baseFishVal: 0,
@@ -3582,13 +5202,33 @@
             redAmberCount: meta.redAmberCount || 0,
             redAmberSlotCount: meta.redAmberSlotCount || 0,
             redAmberSummary: meta.redAmberSummary || '',
+            greenAmberCount: meta.greenAmberCount || 0,
+            greenAmberSlotCount: meta.greenAmberSlotCount || 0,
+            greenAmberSummary: meta.greenAmberSummary || '',
+            blueAmberCount: meta.blueAmberCount || 0,
+            blueAmberSlotCount: meta.blueAmberSlotCount || 0,
+            blueAmberSummary: meta.blueAmberSummary || '',
             equipId: String(chef.equipId || ''),
             equipName: chef.equip ? (chef.equip.name || chef.equip.disp || '') : '',
+            origin: chef.origin || chef.source || '',
+            area: areaItem.name,
+            sweetVal: toInt(chef.sweetVal, 0),
+            sourVal: toInt(chef.sourVal, 0),
+            spicyVal: toInt(chef.spicyVal, 0),
+            saltyVal: toInt(chef.saltyVal, 0),
+            bitterVal: toInt(chef.bitterVal, 0),
+            tastyVal: toInt(chef.tastyVal, 0),
+            collectionDetails: item.detailText || '',
+            disk: chef.disk ? cloneData(chef.disk) : null,
+            diskDisp: chef.diskDisp || (chef.disk && typeof window.GetDiskDisp === 'function' ? window.GetDiskDisp(chef.disk) : ''),
             detailText: item.detailText,
             valueLabel: item.label,
             rawValue: item.rawValue,
             baseRawValue: item.rawValue,
             prefix: areaItem.prefix,
+            targetCondimentName: item.targetCondimentName || '',
+            targetCondimentFlavorLabel: item.targetCondimentFlavorLabel || '',
+            targetCondimentFlavorKey: item.targetCondimentFlavorKey || '',
             // 添加各项采集点数据（用于菜地区域）
             meatVal: toInt(chef.meatVal, 0),
             fishVal: toInt(chef.fishVal, 0),
@@ -3618,7 +5258,7 @@
 
         // 预过滤：只保留前两名采集类型与地区要求完全匹配的厨师
         var matchedCount = 0;
-        var matchedChefs = availableChefs.filter(function(chef) {
+        var matchedChefs = availableChefs.reduce(function(list, chef) {
             // 克隆厨师对象，避免修改原始数据
             var clonedChef = cloneData(chef);
 
@@ -3628,6 +5268,8 @@
                 // 重新计算厨师数据
                 recalculateChefData(clonedChef, chefPoolData);
             }
+
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'jade');
 
             // 重新计算材料技能元数据（含心法盘按地区类型加成）
             clonedChef.__queryAreaName = areaItem.name;
@@ -3658,12 +5300,11 @@
 
             if (isMatched) {
                 matchedCount++;
-                // 如果匹配，用克隆后的厨师替换原始厨师
-                Object.assign(chef, clonedChef);
+                list.push(clonedChef);
             }
 
-            return isMatched;
-        });
+            return list;
+        }, []);
 
 
         // 对匹配的厨师计算指标并排序。
@@ -3747,9 +5388,6 @@
                 metric.detailText += '（自动红玉：' + clonedChef.__autoLabAmberDisp + '）';
             }
 
-            // 用克隆后的数据更新原始厨师
-            Object.assign(chef, clonedChef);
-
             // 计算总贡献值
             var totalContribution = metric.rawValue;
             if (auraInfo.isAura && (auraInfo.auraType === skillType || auraInfo.auraType === '全技法')) {
@@ -3761,7 +5399,7 @@
             }
 
             return $.extend({
-                chef: chef,
+                chef: clonedChef,
                 auraInfo: auraInfo,
                 totalContribution: totalContribution
             }, metric);
@@ -3796,6 +5434,253 @@
         };
     }
 
+    function executeCondAreaQuery(areaItem, availableChefs, chefPoolData) {
+        var condSelection = getCondAreaSelection(areaItem.name);
+        var selected = [];
+        var selectedIdMap = {};
+        var totalValue = 0;
+        var chefSourceMap = {};
+        var useAutoGapAmber = !chefPoolData.context.applyAmbers && loadBooleanSetting('useCondAutoAmber', false);
+        var excludeAssassinChef = loadBooleanSetting('useCondExcludeAssassinChef', false);
+
+        function getChefKey(chef) {
+            return String(chef && (chef.chefId || chef.id || chef.name) || '');
+        }
+
+        function sortExpectationCandidates(candidates) {
+            return candidates.sort(function(left, right) {
+                if (right.expectation !== left.expectation) {
+                    return right.expectation - left.expectation;
+                }
+                if ((right.meta.materialGain || 0) !== (left.meta.materialGain || 0)) {
+                    return (right.meta.materialGain || 0) - (left.meta.materialGain || 0);
+                }
+                if (right.rawValue !== left.rawValue) {
+                    return right.rawValue - left.rawValue;
+                }
+                return toInt(right.chef.rarity, 0) - toInt(left.chef.rarity, 0);
+            });
+        }
+
+        function isCondQueryExcludedChef(item) {
+            var meta = item && item.meta ? item.meta : {};
+
+            if (!excludeAssassinChef) {
+                return false;
+            }
+
+            return !!meta.hasOpeningTimeSkill;
+        }
+
+        function buildCondCandidate(chef, phase, options) {
+            var clonedChef = cloneData(chef);
+            var equipChanged = false;
+            var metric;
+            var meta;
+            var condTarget = condSelection || getCondAreaSelection(areaItem.name);
+            var gapValue = Number(options && options.gapValue || 0);
+
+            if (phase === 'cond') {
+                equipChanged = applyCondEquipIfNeeded(clonedChef, chefPoolData.context, areaItem.name);
+            } else if (phase === 'expectation' || phase === 'expectation-gap') {
+                equipChanged = applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'cond', areaItem.name);
+            }
+
+            if (equipChanged) {
+                recalculateChefData(clonedChef, chefPoolData);
+            }
+
+            if (phase === 'expectation-gap' && useAutoGapAmber) {
+                // 差值补位时才临时自动搭配蓝玉，补够后不再继续给该厨师剩余槽位或后续厨师搭配。
+                autoApplyCondAmberForGapIfNeeded(clonedChef, chefPoolData, areaItem.name, gapValue);
+            } else if (phase === 'cond') {
+                autoApplyCondAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            }
+            clonedChef.__queryAreaName = areaItem.name;
+            meta = getChefMaterialSkillMeta(clonedChef);
+            clonedChef.__queryMeta = meta;
+            clonedChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
+                ? window.calculateMaterialExpectation(clonedChef, clonedChef.equip || null, clonedChef.disk || {})
+                : 0;
+            metric = getAreaQueryMetric(areaItem, clonedChef);
+
+            return $.extend({
+                chef: clonedChef,
+                targetCondimentName: condTarget ? condTarget.name : '',
+                targetCondimentFlavorLabel: condTarget ? condTarget.flavorLabel : '',
+                targetCondimentFlavorKey: condTarget ? condTarget.flavorKey : ''
+            }, metric, {
+                blueAmberFlavorGain: phase === 'expectation-gap'
+                    ? getCondBlueAmberFlavorGain(clonedChef, chefPoolData, areaItem.name)
+                    : null
+            });
+        }
+
+        function findCondGapFillCandidate(expectationCandidates, gapValue) {
+            var numericGap = Number(gapValue || 0);
+            var gapCandidates = [];
+
+            if (!(numericGap > 0 && numericGap <= 120)) {
+                return null;
+            }
+
+            expectationCandidates.forEach(function(baseItem) {
+                var chefId = getChefKey(baseItem.chef);
+                var currentCandidate = null;
+                var amberGain = 0;
+
+                if (!chefId || selectedIdMap[chefId]) {
+                    return;
+                }
+
+                if (chefPoolData.context.applyAmbers) {
+                    if (!(baseItem.meta && baseItem.meta.blueAmberCount > 0)) {
+                        return;
+                    }
+                    if (typeof baseItem.blueAmberFlavorGain !== 'number') {
+                        baseItem.blueAmberFlavorGain = getCondBlueAmberFlavorGain(baseItem.chef, chefPoolData, areaItem.name);
+                    }
+                    amberGain = Number(baseItem.blueAmberFlavorGain || 0);
+                    currentCandidate = baseItem;
+                } else if (useAutoGapAmber) {
+                    if (!chefSourceMap[chefId]) {
+                        return;
+                    }
+                    currentCandidate = buildCondCandidate(chefSourceMap[chefId], 'expectation-gap', {
+                        gapValue: numericGap
+                    });
+                    amberGain = Number(currentCandidate.blueAmberFlavorGain || 0);
+                } else {
+                    return;
+                }
+
+                if (amberGain <= 0) {
+                    return;
+                }
+
+                currentCandidate.blueAmberFlavorGain = amberGain;
+                gapCandidates.push(currentCandidate);
+            });
+
+            if (!gapCandidates.length) {
+                return null;
+            }
+
+            gapCandidates.sort(function(left, right) {
+                var leftReached = Number(left.blueAmberFlavorGain || 0) >= numericGap ? 1 : 0;
+                var rightReached = Number(right.blueAmberFlavorGain || 0) >= numericGap ? 1 : 0;
+
+                if (rightReached !== leftReached) {
+                    return rightReached - leftReached;
+                }
+                if (right.expectation !== left.expectation) {
+                    return right.expectation - left.expectation;
+                }
+                if (Number(right.blueAmberFlavorGain || 0) !== Number(left.blueAmberFlavorGain || 0)) {
+                    return Number(right.blueAmberFlavorGain || 0) - Number(left.blueAmberFlavorGain || 0);
+                }
+                if (right.rawValue !== left.rawValue) {
+                    return right.rawValue - left.rawValue;
+                }
+                return toInt(right.chef.rarity, 0) - toInt(left.chef.rarity, 0);
+            });
+
+            return gapCandidates[0] || null;
+        }
+
+        if (!condSelection) {
+            return {
+                selected: [],
+                totalValue: 0,
+                targetLabel: '调料值',
+                targetCondimentName: '',
+                targetFlavorLabel: ''
+            };
+        }
+
+        availableChefs.forEach(function(chef) {
+            var chefId = getChefKey(chef);
+            if (chefId) {
+                chefSourceMap[chefId] = chef;
+            }
+        });
+
+        var condimentCandidates = availableChefs.map(function(chef) {
+            return buildCondCandidate(chef, 'cond');
+        }).filter(function(item) {
+            return item.rawValue > 0 && !isCondQueryExcludedChef(item);
+        }).sort(function(left, right) {
+            if (right.rawValue !== left.rawValue) {
+                return right.rawValue - left.rawValue;
+            }
+            if (right.expectation !== left.expectation) {
+                return right.expectation - left.expectation;
+            }
+            return toInt(right.chef.rarity, 0) - toInt(left.chef.rarity, 0);
+        });
+
+        condimentCandidates.some(function(item) {
+            var chefId = getChefKey(item.chef);
+            if (selected.length >= areaItem.people) {
+                return true;
+            }
+            selected.push(buildSelectedCollectionChef(item, areaItem));
+            selectedIdMap[chefId] = true;
+            totalValue += toInt(item.rawValue, 0);
+            return totalValue >= areaItem.capacity || (areaItem.capacity - totalValue <= 120);
+        });
+
+        if (selected.length < areaItem.people) {
+            var expectationCandidates = sortExpectationCandidates(availableChefs.map(function(chef) {
+                return buildCondCandidate(chef, 'expectation');
+            }).filter(function(item) {
+                return (item.expectation > 0 || item.rawValue > 0) && !isCondQueryExcludedChef(item);
+            }));
+            var fallbackExpectationCandidate = null;
+
+            while (selected.length < areaItem.people) {
+                var currentGap = Math.max(0, areaItem.capacity - totalValue);
+                var nextCandidate = null;
+
+                if (currentGap > 0 && currentGap <= 120) {
+                    nextCandidate = findCondGapFillCandidate(expectationCandidates, currentGap);
+                }
+
+                if (!nextCandidate) {
+                    fallbackExpectationCandidate = expectationCandidates.find(function(item) {
+                        return !selectedIdMap[getChefKey(item.chef)];
+                    }) || null;
+                    nextCandidate = fallbackExpectationCandidate;
+                }
+
+                if (!nextCandidate) {
+                    break;
+                }
+
+                var nextChefId = getChefKey(nextCandidate.chef);
+                if (!nextChefId || selectedIdMap[nextChefId]) {
+                    break;
+                }
+
+                selected.push(buildSelectedCollectionChef(nextCandidate, areaItem));
+                selectedIdMap[nextChefId] = true;
+                totalValue += toInt(nextCandidate.rawValue, 0);
+            }
+        }
+
+        totalValue = selected.reduce(function(sum, item) {
+            return sum + toInt(item.rawValue, 0);
+        }, 0);
+
+        return {
+            selected: selected,
+            totalValue: totalValue,
+            targetLabel: condSelection.name + '调料值',
+            targetCondimentName: condSelection.name,
+            targetFlavorLabel: condSelection.flavorLabel
+        };
+    }
+
     // 菜地区查询：
     // 按采集期望优先选人；若总采集点不足，尝试用低期望高采集值厨师兜底替换。
     function executeVegAreaQuery(areaItem, availableChefs, chefPoolData) {
@@ -3815,6 +5700,7 @@
                 // 重新计算厨师数据（包括修炼技能）
                 recalculateChefData(clonedChef, chefPoolData);
             }
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'veg');
             // 无论是否替换厨具，都按当前地区重建元数据
             clonedChef.__queryAreaName = areaItem.name;
             clonedChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
@@ -3943,12 +5829,12 @@
                 '烤': '#9c27b0'
             },
             cond: {
-                '樊正阁': '#e91e63',
-                '庖丁阁': '#9c27b0',
-                '膳祖阁': '#673ab7',
-                '易牙阁': '#3f51b5',
-                '彭铿阁': '#2196f3',
-                '伊尹阁': '#009688'
+                '樊正阁': '#ff9800',
+                '庖丁阁': '#f2d56b',
+                '膳祖阁': '#00bcd4',
+                '易牙阁': '#9c27b0',
+                '彭铿阁': '#4caf50',
+                '伊尹阁': '#f44336'
             }
         };
 
@@ -3956,7 +5842,18 @@
     }
 
     // 生成结果卡片中的厨师行（含空位卡片与替换按钮）。
-    function getCollectionResultChefHtml(item, areaName) {
+    function getCollectionResultChefHtml(item, areaName, options) {
+        options = options || {};
+        var readOnly = !!options.readOnly;
+        var equipHtml = readOnly ? getCollectionEquipStaticHtml(item) : getCollectionEquipSelectHtml(item, areaName);
+        var condAmberSummaryHtml = buildCondAmberSummaryHtml(item);
+        var greenAmberMetaHtml = readOnly
+            ? '<span class="collection-result-chef-meta-item is-green-amber">' + escapeHtml(item.greenAmberSummary || '无绿色心法盘') + '</span>'
+            : getCollectionAmberTriggerHtml(item, areaName, escapeHtml(item.greenAmberSummary || '无绿色心法盘'), 'collection-result-chef-meta-item is-green-amber');
+        var redAmberMetaHtml = readOnly
+            ? '<span class="collection-result-chef-meta-item is-red-amber">' + escapeHtml(item.redAmberSummary || '无红色心法盘') + '</span>'
+            : getCollectionAmberTriggerHtml(item, areaName, escapeHtml(item.redAmberSummary || '无红色心法盘'), 'collection-result-chef-meta-item is-red-amber');
+
         if (isEmptyCollectionChef(item)) {
             return [
                 '<div class="collection-result-chef-card is-empty collection-result-chef-empty-trigger" data-area-name="', escapeHtml(areaName), '">',
@@ -4005,8 +5902,8 @@
             var auraContribution = Math.max(0, toInt((item.totalContribution || item.rawValue), 0) - toInt(item.rawValue, 0));
             headExtraHtml = '<span class="collection-result-chef-red-amber-inline">红色心法盘*' + toInt(item.redAmberSlotCount, 0) + '</span>';
             metaHtml.push('<span class="collection-result-chef-meta-item is-lab-value">' + escapeHtml(item.valueLabel) + ' <span class="collection-result-chef-value-number">' + item.rawValue + '</span></span>');
-            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
-            metaHtml.push('<span class="collection-result-chef-meta-item is-red-amber">' + escapeHtml(item.redAmberSummary || '无红色心法盘') + '</span>');
+            metaHtml.push(equipHtml);
+            metaHtml.push(redAmberMetaHtml);
 
             if (auraContribution > 0) {
                 var auraText = '光环加成 +' + auraContribution;
@@ -4025,6 +5922,9 @@
                 { label: '面', value: item.creationVal, key: 'creation' }
             ];
             headExtraHtml = '<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>';
+            if (toInt(item.greenAmberSlotCount, 0) > 0) {
+                headExtraHtml += '<span class="collection-result-chef-green-amber-inline">绿色心法盘*' + toInt(item.greenAmberSlotCount, 0) + '</span>';
+            }
             
             // 判断当前地区对应的采集类型
             var currentKey = '';
@@ -4043,7 +5943,8 @@
                 var className = isHighlight ? 'collection-result-chef-meta-item is-collection-highlight' : 'collection-result-chef-meta-item is-collection-normal';
                 metaHtml.push('<span class="' + className + '">' + collItem.label + ' ' + collItem.value + '</span>');
             });
-            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
+            metaHtml.push(equipHtml);
+            metaHtml.push(greenAmberMetaHtml);
             
             // 第三行：素材、暴击素材、暴击率
             var teamBonusText = buildCollectionTeamBonusText();
@@ -4053,10 +5954,30 @@
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-material">素材 ' + item.materialGain + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-material">暴击素材 ' + item.critMaterial + '%</span>');
             secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-chance">暴击率 ' + item.critChance + '%</span>');
+        } else if (item.prefix === 'cond') {
+            var condFlavorText = item.targetCondimentFlavorLabel || '';
+            var condValueLabel = condFlavorText || item.valueLabel || '调料值';
+            if (toInt(item.blueAmberCount, 0) > 0) {
+                headExtraHtml = '<span class="collection-result-chef-blue-amber-inline">蓝色心法盘*' + toInt(item.blueAmberCount, 0) + '</span>';
+            }
+            headExtraHtml += '<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>';
+            metaHtml.push('<span class="collection-result-chef-meta-item is-cond-value">' + escapeHtml(condValueLabel) + ' <span class="collection-result-chef-value-number">' + item.rawValue + '</span></span>');
+            metaHtml.push(equipHtml);
+            metaHtml.push(readOnly
+                ? '<span class="collection-result-chef-meta-item is-cond-amber">' + condAmberSummaryHtml + '</span>'
+                : getCollectionAmberTriggerHtml(item, areaName, condAmberSummaryHtml, 'collection-result-chef-meta-item is-cond-amber'));
+
+            secondRowHtml.push('<span class="collection-result-chef-meta-item is-material">素材 ' + item.materialGain + '%</span>');
+            secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-material">暴击素材 ' + item.critMaterial + '%</span>');
+            secondRowHtml.push('<span class="collection-result-chef-meta-item is-crit-chance">暴击率 ' + item.critChance + '%</span>');
         } else {
             // 玉片区：第二行显示采集点、厨具和采集期望值
+            if (toInt(item.greenAmberSlotCount, 0) > 0) {
+                headExtraHtml = '<span class="collection-result-chef-green-amber-inline">绿色心法盘*' + toInt(item.greenAmberSlotCount, 0) + '</span>';
+            }
             metaHtml.push('<span class="collection-result-chef-meta-item is-jade-value">' + escapeHtml(item.valueLabel) + ' <span class="collection-result-chef-value-number">' + item.rawValue + '</span></span>');
-            metaHtml.push(getCollectionEquipSelectHtml(item, areaName));
+            metaHtml.push(equipHtml);
+            metaHtml.push(greenAmberMetaHtml);
             metaHtml.push('<span class="collection-result-chef-meta-item is-expectation">采集期望值 ' + item.collectionExpectation + '</span>');
             
             // 第三行：素材、暴击素材、暴击率
@@ -4082,9 +6003,11 @@
                         rarityHtml ? '<span class="collection-result-chef-stars">' + rarityHtml + '</span>' : '',
                         headExtraHtml,
                     '</div>',
-                    '<div class="collection-result-chef-head-right">',
-                        '<button class="collection-result-chef-replace-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '">替换</button>',
-                    '</div>',
+                    readOnly ? '' : [
+                        '<div class="collection-result-chef-head-right">',
+                            '<button class="collection-result-chef-replace-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '">替换</button>',
+                        '</div>'
+                    ].join(''),
                 '</div>',
                 metaRowsHtml,
             '</div>'
@@ -4092,29 +6015,38 @@
     }
 
     // 生成单个区域结果卡片。
-    function getCollectionResultCardHtml(result) {
+    function getCollectionResultCardHtml(result, options) {
+        options = options || {};
         var summaryHtml = [];
         var chefsHtml = result.chefs.length ? result.chefs.map(function(item) {
-            return getCollectionResultChefHtml(item, result.areaName);
+            return getCollectionResultChefHtml(item, result.areaName, options);
         }).join('') : '<div class="collection-preview-empty">没有可用厨师</div>';
         var areaNameColor = getCollectionAreaNameColor(result.areaName, result.prefix);
         var areaNameStyle = areaNameColor ? (' style="color:' + areaNameColor + ';"') : '';
         var cardStyle = areaNameColor ? (' style="border-top-color:' + areaNameColor + ';"') : '';
-        var isCollapsed = isCollectionResultAreaCollapsed(result.areaName);
+        var isCollapsed = options.forceExpanded ? false : isCollectionResultAreaCollapsed(result.areaName);
         var cardClass = isCollapsed ? ' is-collapsed' : '';
         var iconClass = isCollapsed ? 'glyphicon-chevron-down' : 'glyphicon-chevron-up';
         var chefListStyle = isCollapsed ? ' style="display:none;"' : '';
 
-        summaryHtml.push('<span class="collection-result-summary-pill">人数 ' + getAssignedChefCount(result.chefs) + '/' + result.people + '</span>');
         if (result.prefix === 'lab') {
             summaryHtml.push('<span class="collection-result-summary-pill">总技法 ' + result.totalValue + '</span>');
+        } else if (result.prefix === 'cond') {
+            var condName = result.targetCondimentName || (result.chefs[0] && result.chefs[0].targetCondimentName) || '';
+            var condFlavorLabel = result.targetFlavorLabel || (result.chefs[0] && result.chefs[0].targetCondimentFlavorLabel) || '';
+            var condPillStyle = getCondSummaryPillStyle(condName, condFlavorLabel);
+            if (condName) {
+                summaryHtml.push('<span class="collection-result-summary-pill"' + condPillStyle + '>' + escapeHtml(condName) + (condFlavorLabel ? '（' + escapeHtml(condFlavorLabel) + '）' : '') + '</span>');
+            }
+            summaryHtml.push('<span class="collection-result-summary-pill">调料值 ' + result.totalValue + '/' + result.capacity + '</span>');
+            summaryHtml.push('<span class="collection-result-summary-pill">总期望值 ' + getAreaTotalCollectionExpectation(result.chefs) + '</span>');
         } else {
             summaryHtml.push('<span class="collection-result-summary-pill">采集点 ' + result.totalValue + '/' + result.capacity + '</span>');
             if (result.prefix === 'veg') {
                 summaryHtml.push('<span class="collection-result-summary-pill">总期望值 ' + getAreaTotalCollectionExpectation(result.chefs) + '</span>');
             }
         }
-        if (result.insufficient) {
+        if (result.insufficient && result.prefix !== 'cond') {
             summaryHtml.push('<span class="collection-result-summary-pill is-warning">未达标</span>');
         }
 
@@ -4127,12 +6059,14 @@
                             '<span class="collection-result-title-summary">', summaryHtml.join(''), '</span>',
                         '</div>',
                     '</div>',
-                    '<div class="collection-result-card-actions">',
-                        '<button class="collection-result-save-btn" data-area-name="' + escapeHtml(result.areaName) + '" data-area-prefix="' + escapeHtml(result.prefix) + '">保存组合</button>',
-                        '<button class="collection-result-toggle-btn" data-area-name="' + escapeHtml(result.areaName) + '">',
-                            '<span class="glyphicon ', iconClass, '"></span>',
-                        '</button>',
-                    '</div>',
+                    options.hideActions ? '' : [
+                        '<div class="collection-result-card-actions">',
+                            '<button class="collection-result-save-btn" data-area-name="' + escapeHtml(result.areaName) + '" data-area-prefix="' + escapeHtml(result.prefix) + '">保存</button>',
+                            '<button class="collection-result-toggle-btn" data-area-name="' + escapeHtml(result.areaName) + '">',
+                                '<span class="glyphicon ', iconClass, '"></span>',
+                            '</button>',
+                        '</div>'
+                    ].join(''),
                 '</div>',
                 '<div class="collection-result-chef-list"', chefListStyle, '>', chefsHtml, '</div>',
             '</div>'
@@ -4191,36 +6125,51 @@
     // 执行全区域查询：按排序顺序逐区选人，并从候选池中移除已分配厨师。
     function executeCollectionQuery(areaItems, chefPoolData) {
         var availableChefs = chefPoolData.chefs.slice();
-        var results = [];
+        var resultMap = {};
         var groupOrder = [];
+        var executionOrder = areaItems.filter(function(item) {
+            return item.prefix === 'cond';
+        }).concat(areaItems.filter(function(item) {
+            return item.prefix !== 'cond';
+        }));
 
-        areaItems.forEach(function(areaItem) {
+        executionOrder.forEach(function(areaItem) {
             var candidates;
             var selected;
             var totalValue;
             var result;
             var vegQueryResult;
+            var resultKey = areaItem.prefix + '::' + areaItem.name;
 
             if (areaItem.people <= 0) {
                 return;
             }
 
             if (areaItem.prefix === 'cond') {
+                var condQueryResult = executeCondAreaQuery(areaItem, availableChefs, chefPoolData);
+                selected = condQueryResult.selected;
+                totalValue = condQueryResult.totalValue;
+
+                selected.forEach(function(item) {
+                    availableChefs = availableChefs.filter(function(chef) {
+                        return String(chef.chefId || chef.id || chef.name) !== String(item.id);
+                    });
+                });
+
                 result = {
                     areaName: areaItem.name,
                     groupKey: areaItem.prefix,
                     prefix: areaItem.prefix,
-                    targetLabel: '调料',
+                    targetLabel: condQueryResult.targetLabel || '调料值',
+                    targetCondimentName: condQueryResult.targetCondimentName || '',
+                    targetFlavorLabel: condQueryResult.targetFlavorLabel || '',
                     people: areaItem.people,
                     capacity: areaItem.capacity,
-                    totalValue: 0,
-                    insufficient: true,
-                    chefs: []
+                    totalValue: totalValue,
+                    insufficient: selected.length < areaItem.people || totalValue < areaItem.capacity,
+                    chefs: selected
                 };
-                results.push(result);
-                if (groupOrder.indexOf(result.groupKey) < 0) {
-                    groupOrder.push(result.groupKey);
-                }
+                resultMap[resultKey] = result;
                 return;
             }
 
@@ -4247,10 +6196,7 @@
                     chefs: selected
                 };
 
-                results.push(result);
-                if (groupOrder.indexOf(result.groupKey) < 0) {
-                    groupOrder.push(result.groupKey);
-                }
+                resultMap[resultKey] = result;
                 return;
             }
 
@@ -4277,10 +6223,7 @@
                     chefs: selected
                 };
 
-                results.push(result);
-                if (groupOrder.indexOf(result.groupKey) < 0) {
-                    groupOrder.push(result.groupKey);
-                }
+                resultMap[resultKey] = result;
                 return;
             }
 
@@ -4307,10 +6250,7 @@
                     chefs: selected
                 };
 
-                results.push(result);
-                if (groupOrder.indexOf(result.groupKey) < 0) {
-                    groupOrder.push(result.groupKey);
-                }
+                resultMap[resultKey] = result;
                 return;
             }
 
@@ -4356,8 +6296,16 @@
                 insufficient: areaItem.prefix === 'lab' ? selected.length < areaItem.people : (selected.length < areaItem.people || totalValue < areaItem.capacity),
                 chefs: selected
             };
+            resultMap[resultKey] = result;
+        });
 
-            results.push(result);
+        var results = areaItems.map(function(areaItem) {
+            return resultMap[areaItem.prefix + '::' + areaItem.name];
+        }).filter(function(item) {
+            return !!item;
+        });
+
+        results.forEach(function(result) {
             if (groupOrder.indexOf(result.groupKey) < 0) {
                 groupOrder.push(result.groupKey);
             }
@@ -4463,6 +6411,7 @@
                             getAreaCard('菜地区', 'veg', 'veg', state.areaEnabled.veg, false),
                             getAreaCard('玉片区', 'jade', 'jade', state.areaEnabled.jade, false),
                             getAreaCard('实验室', 'lab', 'lab', state.areaEnabled.lab, false),
+                            getAreaCard('调料区', 'cond', 'cond', state.areaEnabled.cond, false),
                         '</div>',
                         '<div class="collection-action-grid">',
                             '<button type="button" class="btn btn-primary collection-action-btn" data-action="sort-priority">',
@@ -4596,25 +6545,47 @@
         showReplaceChefDialog(areaName, '');
     });
 
+    $(document).on('click', '.collection-result-chef-amber-trigger', function(e) {
+        e.stopPropagation();
+        showCollectionChefDiskDialog(
+            $(this).data('area-name'),
+            $(this).data('chef-id'),
+            $(this).data('chef-name')
+        );
+    });
+
     $(document).on('show.bs.select', '#collection-team-root .collection-result-equip-select', function() {
         if (state.queryLoading || !state.queryResults || !state.queryResults.items) {
             return;
         }
+        if (isCollectionMobileViewport()) {
+            $('body').addClass('m-no-scroll');
+        }
         populateCollectionEquipSelect($(this));
+    });
+
+    $(document).on('hide.bs.select', '#collection-team-root .collection-result-equip-select', function() {
+        $('body').removeClass('m-no-scroll');
     });
 
     $(document).on('shown.bs.select', '#collection-team-root .collection-result-equip-select', function() {
         var $select = $(this);
         window.requestAnimationFrame(function() {
             resizeCollectionEquipSelectMenu($select);
-            alignCollectionEquipSelectMenu($select);
+            if (!isCollectionMobileViewport()) {
+                alignCollectionEquipSelectMenu($select);
+            }
             syncCollectionEquipPickerSelection($select);
             window.setTimeout(function() {
-                alignCollectionEquipSelectMenu($select);
+                if (!isCollectionMobileViewport()) {
+                    alignCollectionEquipSelectMenu($select);
+                }
                 syncCollectionEquipPickerSelection($select);
             }, 0);
             window.setTimeout(function() {
-                alignCollectionEquipSelectMenu($select);
+                if (!isCollectionMobileViewport()) {
+                    alignCollectionEquipSelectMenu($select);
+                }
                 syncCollectionEquipPickerSelection($select);
             }, 30);
         });
@@ -4654,6 +6625,7 @@
                 $select.selectpicker('destroy');
             }
         } catch (err) {}
+        $('body').removeClass('m-no-scroll');
 
         updateCollectionChefEquip(
             areaName,
@@ -4696,6 +6668,7 @@
                 $select.selectpicker('destroy');
             }
         } catch (err) {}
+        $('body').removeClass('m-no-scroll');
 
         updateCollectionChefEquip(areaName, chefId, chefName, '');
     });
@@ -4739,6 +6712,7 @@
             alert('请先执行查询');
             return;
         }
+        var chefPoolData = state.queryChefPool && state.queryChefPool.context ? state.queryChefPool : null;
 
         // 查找当前区域的结果
         var areaResult = state.queryResults.items.find(function(result) {
@@ -4757,16 +6731,22 @@
 
         // 构建保存的组合数据
         var savedChefs = areaResult.chefs.map(function(chef) {
-            return {
-                name: chef.name,
-                rarity: chef.rarity,
-                isUltimate: chef.isUltimate
-            };
+            return serializeCollectionChefForSave(chef, areaName, chefPoolData);
+        }).filter(function(chef) {
+            return !!chef;
         });
 
         var combination = {
             areaName: areaName,
+            areaPrefix: areaPrefix || areaResult.prefix || '',
             savedTime: Date.now(),
+            totalValue: toInt(areaResult.totalValue, 0),
+            capacity: toInt(areaResult.capacity, 0),
+            people: toInt(areaResult.people, 0),
+            insufficient: !!areaResult.insufficient,
+            targetLabel: areaResult.targetLabel || '',
+            targetCondimentName: areaResult.targetCondimentName || '',
+            targetFlavorLabel: areaResult.targetFlavorLabel || '',
             chefs: savedChefs
         };
 
@@ -4886,9 +6866,20 @@
                 applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'jade', areaItem.name);
             } else if (areaItem.prefix === 'veg') {
                 applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'veg', areaItem.name);
+            } else if (areaItem.prefix === 'cond') {
+                applyCondEquipIfNeeded(clonedChef, chefPoolData.context, areaItem.name);
             }
 
             recalculateChefData(clonedChef, chefPoolData);
+            if (areaItem.prefix === 'lab') {
+                autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            } else if (areaItem.prefix === 'jade') {
+                autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'jade');
+            } else if (areaItem.prefix === 'veg') {
+                autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'veg');
+            } else if (areaItem.prefix === 'cond') {
+                autoApplyCondAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+            }
             clonedChef.__queryAreaName = areaItem.name;
             clonedChef.__queryMeta = getChefMaterialSkillMeta(clonedChef);
             clonedChef.materialExpectation = typeof window.calculateMaterialExpectation === 'function'
@@ -4936,13 +6927,187 @@
         });
 
         // 显示替换对话框
-        showReplaceChefDialogUI(currentArea, currentChefName, candidates.slice(0, 20));
+        showReplaceChefDialogUI(currentArea, currentChefName, candidates);
     }
 
     // 渲染替换弹窗UI。
     // 菜地区会展示四维采集点和素材三指标（素材/暴击素材/暴击率）。
     function showReplaceChefDialogUI(currentArea, currentChefName, candidates) {
         var highlightKey = getCollectionHighlightKeyByAreaName(currentArea.areaName);
+        var displayCandidates = Array.isArray(candidates) ? candidates : [];
+        var condTabBaseId = 'replace-chef-cond-' + Date.now();
+
+        function getReplaceChefEquipText(chef) {
+            if (!chef) {
+                return '无厨具';
+            }
+            if (chef.equip && (chef.equip.name || chef.equip.disp)) {
+                return String(chef.equip.name || chef.equip.disp);
+            }
+            if (chef.equipName) {
+                return String(chef.equipName);
+            }
+            return '无厨具';
+        }
+
+        function getReplaceChefAmberMeta(chef) {
+            var meta = chef && chef.__queryMeta ? chef.__queryMeta : {};
+
+            if (currentArea.prefix === 'lab') {
+                return {
+                    count: toInt(chef && chef.redAmberSlotCount, toInt(meta.redAmberSlotCount, 0)),
+                    summary: String(meta.redAmberSummary || '无红色心法盘'),
+                    countLabel: '红色心法盘*',
+                    chipClass: 'is-red-amber'
+                };
+            }
+            if (currentArea.prefix === 'cond') {
+                return {
+                    count: toInt(chef && chef.blueAmberSlotCount, toInt(meta.blueAmberSlotCount, 0)),
+                    summary: String(meta.blueAmberSummary || '无蓝色心法盘'),
+                    countLabel: '蓝色心法盘*',
+                    chipClass: 'is-blue-amber'
+                };
+            }
+            return {
+                count: toInt(chef && chef.greenAmberSlotCount, toInt(meta.greenAmberSlotCount, 0)),
+                summary: String(meta.greenAmberSummary || '无绿色心法盘'),
+                countLabel: '绿色心法盘*',
+                chipClass: 'is-green-amber'
+            };
+        }
+
+        function buildReplaceChefSecondRowHtml(item, displayMode) {
+            var chef = item && item.chef ? item.chef : {};
+            var amberMeta = getReplaceChefAmberMeta(chef);
+            var chips = [];
+            var metric = item.metric || {};
+
+            if (currentArea.prefix === 'lab') {
+                var auraContribution = Math.max(0, toInt(item.totalContribution || metric.rawValue, 0) - toInt(metric.rawValue, 0));
+                var auraText = '无光环';
+                if (item.auraInfo && item.auraInfo.isAura && auraContribution > 0) {
+                    var auraMultiplier = item.auraInfo.auraBonus > 0 ? Math.round(auraContribution / item.auraInfo.auraBonus) : 1;
+                    auraText = '光环 ' + item.auraInfo.auraType + '+' + item.auraInfo.auraBonus + ' ×' + auraMultiplier + ' = +' + auraContribution;
+                } else if (item.auraInfo && item.auraInfo.isAura) {
+                    auraText = '光环 ' + item.auraInfo.auraType + '+' + item.auraInfo.auraBonus;
+                }
+                chips.push('<span class="replace-chef-item-value-chip is-highlight">' + escapeHtml(metric.label) + ' ' + metric.rawValue + '</span>');
+                chips.push('<span class="replace-chef-item-value-chip is-aura">' + escapeHtml(auraText) + '</span>');
+            } else if (currentArea.prefix === 'veg') {
+                var collectionItems = [
+                    { label: '肉', value: toInt(chef.meatVal, 0), key: 'meat' },
+                    { label: '鱼', value: toInt(chef.fishVal, 0), key: 'fish' },
+                    { label: '菜', value: toInt(chef.vegVal, 0), key: 'veg' },
+                    { label: '面', value: toInt(chef.creationVal, 0), key: 'creation' }
+                ];
+                chips = chips.concat(collectionItems.map(function(collItem) {
+                    var className = collItem.key === highlightKey ? 'replace-chef-item-value-chip is-highlight' : 'replace-chef-item-value-chip';
+                    return '<span class="' + className + '">' + collItem.label + ' ' + collItem.value + '</span>';
+                }));
+            } else if (currentArea.prefix === 'jade') {
+                chips.push('<span class="replace-chef-item-value-chip is-highlight">' + escapeHtml(metric.label) + ' ' + metric.rawValue + '</span>');
+                chips.push('<span class="replace-chef-item-value-chip is-expectation">采集期望值 ' + Number(metric.expectation || 0).toFixed(2).replace(/\.00$/, '') + '</span>');
+            } else if (currentArea.prefix === 'cond') {
+                var flavorLabel = chef.targetCondimentFlavorLabel || currentArea.targetFlavorLabel || '';
+                var valueText = flavorLabel ? (flavorLabel + '：' + metric.rawValue) : ('调料值：' + metric.rawValue);
+                if (displayMode === 'expectation') {
+                    chips.push('<span class="replace-chef-item-value-chip is-expectation">采集期望值 ' + Number(metric.expectation || 0).toFixed(2).replace(/\.00$/, '') + '</span>');
+                } else {
+                    chips.push('<span class="replace-chef-item-value-chip is-highlight">' + escapeHtml(valueText) + '</span>');
+                }
+            }
+
+            chips.push('<span class="replace-chef-item-meta-chip is-equip">' + escapeHtml(getReplaceChefEquipText(chef)) + '</span>');
+            chips.push('<span class="replace-chef-item-meta-chip ' + amberMeta.chipClass + '">' + escapeHtml(amberMeta.summary) + '</span>');
+            return '<div class="replace-chef-item-values">' + chips.join('') + '</div>';
+        }
+
+        function renderReplaceChefItem(item, displayMode) {
+            var chef = item.chef;
+            var rarityStars = '';
+            var assignedAreaTag = '';
+            var detailHtml = '';
+            var headExtraHtml = '';
+            var secondRowHtml = '';
+            for (var i = 0; i < toInt(chef.rarity, 0); i++) {
+                rarityStars += '★';
+            }
+
+            if (item.assignedArea) {
+                assignedAreaTag = '<span class="replace-chef-item-assigned">已分配给：' + escapeHtml(item.assignedArea) + '</span>';
+            }
+
+            headExtraHtml = '<span class="replace-chef-item-inline-tag ' + getReplaceChefAmberMeta(chef).chipClass + '">' + getReplaceChefAmberMeta(chef).countLabel + getReplaceChefAmberMeta(chef).count + '</span>';
+            secondRowHtml = buildReplaceChefSecondRowHtml(item, displayMode);
+
+            if (currentArea.prefix === 'veg' || currentArea.prefix === 'jade' || currentArea.prefix === 'cond') {
+                detailHtml = '<div class="replace-chef-item-skill-metrics">'
+                    + '<span class="replace-chef-item-skill-chip is-material">素材 ' + (chef.__queryMeta && chef.__queryMeta.materialGain || 0) + '%</span>'
+                    + '<span class="replace-chef-item-skill-chip is-crit-material">暴击素材 ' + (chef.__queryMeta && chef.__queryMeta.critMaterial || 0) + '%</span>'
+                    + '<span class="replace-chef-item-skill-chip is-crit-chance">暴击率 ' + (chef.__queryMeta && chef.__queryMeta.critChance || 0) + '%</span>'
+                    + '</div>';
+            }
+
+            return [
+                '<div class="replace-chef-item' + (item.isAssignedOtherArea ? ' is-assigned-other-area' : '') + '" data-chef-name="' + escapeHtml(chef.name) + '">',
+                    '<div class="replace-chef-item-info">',
+                        '<span class="replace-chef-item-name">' + escapeHtml(chef.name) + '</span>',
+                        rarityStars ? '<span class="replace-chef-item-stars">' + rarityStars + '</span>' : '',
+                        headExtraHtml,
+                        assignedAreaTag,
+                    '</div>',
+                    secondRowHtml,
+                    detailHtml,
+                '</div>'
+            ].join('');
+        }
+
+        function renderReplaceChefList(items) {
+            var displayMode = arguments.length > 1 ? arguments[1] : '';
+            return items.length ? items.map(function(item) {
+                return renderReplaceChefItem(item, displayMode);
+            }).join('') : '<div class="replace-chef-empty">没有可用的替换厨师</div>';
+        }
+
+        function renderCondSections(items) {
+            var byValue = items.slice().sort(function(left, right) {
+                if (right.metric.rawValue !== left.metric.rawValue) {
+                    return right.metric.rawValue - left.metric.rawValue;
+                }
+                if ((right.metric.expectation || 0) !== (left.metric.expectation || 0)) {
+                    return (right.metric.expectation || 0) - (left.metric.expectation || 0);
+                }
+                return right.metric.score - left.metric.score;
+            }).slice(0, 20);
+            var byExpectation = items.slice().sort(function(left, right) {
+                if ((right.metric.expectation || 0) !== (left.metric.expectation || 0)) {
+                    return (right.metric.expectation || 0) - (left.metric.expectation || 0);
+                }
+                if (right.metric.rawValue !== left.metric.rawValue) {
+                    return right.metric.rawValue - left.metric.rawValue;
+                }
+                return right.metric.score - left.metric.score;
+            }).slice(0, 20);
+
+            return [
+                '<div class="replace-chef-tabs">',
+                    '<ul class="nav nav-tabs replace-chef-tab-nav" role="tablist">',
+                        '<li class="active"><a href="#', condTabBaseId, '-value" data-toggle="tab">调料值</a></li>',
+                        '<li><a href="#', condTabBaseId, '-expectation" data-toggle="tab">采集期望值</a></li>',
+                    '</ul>',
+                    '<div class="tab-content replace-chef-tab-content">',
+                        '<div class="tab-pane active" id="', condTabBaseId, '-value">',
+                            renderReplaceChefList(byValue, 'value'),
+                        '</div>',
+                        '<div class="tab-pane" id="', condTabBaseId, '-expectation">',
+                            renderReplaceChefList(byExpectation, 'expectation'),
+                        '</div>',
+                    '</div>',
+                '</div>',
+            ].join('');
+        }
+
         var dialogHtml = [
             '<div class="replace-chef-dialog">',
                 '<div class="replace-chef-dialog-header">',
@@ -4950,58 +7115,9 @@
                     currentChefName ? '<div class="replace-chef-current">当前: ' + escapeHtml(currentChefName) + '</div>' : '<div class="replace-chef-current">当前: 空位</div>',
                 '</div>',
                 '<div class="replace-chef-dialog-body">',
-                    candidates.length ? candidates.map(function(item) {
-                        var chef = item.chef;
-                        var metric = item.metric;
-                        var rarityStars = '';
-                        var assignedAreaTag = '';
-                        var metricHtml = '';
-                        var detailHtml = '';
-                        for (var i = 0; i < toInt(chef.rarity, 0); i++) {
-                            rarityStars += '★';
-                        }
-
-                        if (item.assignedArea) {
-                            assignedAreaTag = '<span class="replace-chef-item-assigned">已分配给：' + escapeHtml(item.assignedArea) + '</span>';
-                        }
-
-                        if (currentArea.prefix === 'veg') {
-                            var collectionItems = [
-                                { label: '肉', value: toInt(chef.meatVal, 0), key: 'meat' },
-                                { label: '鱼', value: toInt(chef.fishVal, 0), key: 'fish' },
-                                { label: '菜', value: toInt(chef.vegVal, 0), key: 'veg' },
-                                { label: '面', value: toInt(chef.creationVal, 0), key: 'creation' }
-                            ];
-                            metricHtml = '<div class="replace-chef-item-values">' + collectionItems.map(function(collItem) {
-                                var className = collItem.key === highlightKey ? 'replace-chef-item-value-chip is-highlight' : 'replace-chef-item-value-chip';
-                                return '<span class="' + className + '">' + collItem.label + ' ' + collItem.value + '</span>';
-                            }).join('') + '</div>';
-                            detailHtml = '<div class="replace-chef-item-skill-metrics">'
-                                + '<span class="replace-chef-item-skill-chip is-material">素材 ' + (chef.__queryMeta && chef.__queryMeta.materialGain || 0) + '%</span>'
-                                + '<span class="replace-chef-item-skill-chip is-crit-material">暴击素材 ' + (chef.__queryMeta && chef.__queryMeta.critMaterial || 0) + '%</span>'
-                                + '<span class="replace-chef-item-skill-chip is-crit-chance">暴击率 ' + (chef.__queryMeta && chef.__queryMeta.critChance || 0) + '%</span>'
-                                + '</div>';
-                        } else {
-                            metricHtml = '<div class="replace-chef-item-value">' + escapeHtml(metric.label) + ': <span class="replace-chef-item-value-number">' + metric.rawValue + '</span></div>';
-                            detailHtml = '<div class="replace-chef-item-skill-metrics">'
-                                + '<span class="replace-chef-item-skill-chip is-material">素材 ' + (chef.__queryMeta && chef.__queryMeta.materialGain || 0) + '%</span>'
-                                + '<span class="replace-chef-item-skill-chip is-crit-material">暴击素材 ' + (chef.__queryMeta && chef.__queryMeta.critMaterial || 0) + '%</span>'
-                                + '<span class="replace-chef-item-skill-chip is-crit-chance">暴击率 ' + (chef.__queryMeta && chef.__queryMeta.critChance || 0) + '%</span>'
-                                + '</div>';
-                        }
-
-                        return [
-                            '<div class="replace-chef-item' + (item.isAssignedOtherArea ? ' is-assigned-other-area' : '') + '" data-chef-name="' + escapeHtml(chef.name) + '">',
-                                '<div class="replace-chef-item-info">',
-                                    '<span class="replace-chef-item-name">' + escapeHtml(chef.name) + '</span>',
-                                    rarityStars ? '<span class="replace-chef-item-stars">' + rarityStars + '</span>' : '',
-                                    assignedAreaTag,
-                                '</div>',
-                                metricHtml,
-                                detailHtml,
-                            '</div>'
-                        ].join('');
-                    }).join('') : '<div class="replace-chef-empty">没有可用的替换厨师</div>',
+                    currentArea.prefix === 'cond'
+                        ? renderCondSections(displayCandidates)
+                        : renderReplaceChefList(displayCandidates.slice(0, 20)),
                 '</div>',
             '</div>'
         ].join('');
@@ -5088,11 +7204,19 @@
             applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'jade', areaItem.name);
         } else if (areaItem.prefix === 'veg') {
             applyPreferredCollectionEquipIfNeeded(clonedChef, chefPoolData, 'veg', areaItem.name);
+        } else if (areaItem.prefix === 'cond') {
+            applyCondEquipIfNeeded(clonedChef, chefPoolData.context, areaItem.name);
         }
 
         recalculateChefData(clonedChef, chefPoolData);
         if (areaItem.prefix === 'lab') {
             autoApplyLabRedAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
+        } else if (areaItem.prefix === 'jade') {
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'jade');
+        } else if (areaItem.prefix === 'veg') {
+            autoApplyAreaGreenAmberIfNeeded(clonedChef, chefPoolData, areaItem.name, 'veg');
+        } else if (areaItem.prefix === 'cond') {
+            autoApplyCondAmberIfNeeded(clonedChef, chefPoolData, areaItem.name);
         }
         clonedChef.__queryAreaName = areaItem.name;
         clonedChef.__queryMeta = getChefMaterialSkillMeta(clonedChef);
@@ -5120,7 +7244,10 @@
             label: metric.label,
             detailText: metric.detailText,
             expectation: metric.expectation,
-            meta: metric.meta
+            meta: metric.meta,
+            targetCondimentName: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).name || '') : '',
+            targetCondimentFlavorLabel: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).flavorLabel || '') : '',
+            targetCondimentFlavorKey: areaItem.prefix === 'cond' ? ((getCondAreaSelection(areaItem.name) || {}).flavorKey || '') : ''
         }, areaItem);
         if (areaItem.prefix === 'lab') {
             newChefResult = enrichLabChefResult(newChefResult, clonedChef, areaItem, chefPoolData, auraInfo);
@@ -5218,6 +7345,7 @@
                                 '<li class="active"><a href="#config-veg" data-toggle="tab">菜地区</a></li>',
                                 '<li><a href="#config-jade" data-toggle="tab">玉片区</a></li>',
                                 '<li><a href="#config-lab" data-toggle="tab">实验室</a></li>',
+                                '<li><a href="#config-cond" data-toggle="tab">调料区</a></li>',
                             '</ul>',
                             '<div class="tab-content" style="margin-top: 15px;">',
                                 '<div class="tab-pane active" id="config-veg">',
@@ -5228,6 +7356,9 @@
                                 '</div>',
                                 '<div class="tab-pane" id="config-lab">',
                                     getLabConfigPanel(),
+                                '</div>',
+                                '<div class="tab-pane" id="config-cond">',
+                                    getCondConfigPanel(),
                                 '</div>',
                             '</div>',
                         '</div>',
@@ -5241,7 +7372,15 @@
 
         var $modal = $(html);
         $modal.modal('show');
+        initializeCondConfigPickers($modal);
         $modal.on('hidden.bs.modal', function() {
+            $modal.find('select.config-cond-select').each(function() {
+                try {
+                    if ($(this).data('selectpicker')) {
+                        $(this).selectpicker('destroy');
+                    }
+                } catch (e) {}
+            });
             $modal.remove();
         });
 
@@ -5252,6 +7391,33 @@
             var checked = $checkbox.prop('checked');
             saveBooleanSetting(key, checked);
 
+            // 菜地区银布鞋和金丝筒靴互斥
+            if (key === 'useSilverShoes' && checked) {
+                $modal.find('.config-veg-golden').prop('checked', false);
+                saveBooleanSetting('useGoldenSilkBoots', false);
+            } else if (key === 'useGoldenSilkBoots' && checked) {
+                $modal.find('.config-veg-silver').prop('checked', false);
+                saveBooleanSetting('useSilverShoes', false);
+            }
+
+            // 玉片区银布鞋和金丝筒靴互斥
+            if (key === 'useJadeSilverShoes' && checked) {
+                $modal.find('.config-jade-golden').prop('checked', false);
+                saveBooleanSetting('useJadeGoldenSilkBoots', false);
+            } else if (key === 'useJadeGoldenSilkBoots' && checked) {
+                $modal.find('.config-jade-silver').prop('checked', false);
+                saveBooleanSetting('useJadeSilverShoes', false);
+            }
+
+            // 调料区银布鞋和金丝筒靴互斥
+            if (key === 'useCondSilverShoes' && checked) {
+                $modal.find('.config-cond-golden').prop('checked', false);
+                saveBooleanSetting('useCondGoldenSilkBoots', false);
+            } else if (key === 'useCondGoldenSilkBoots' && checked) {
+                $modal.find('.config-cond-silver').prop('checked', false);
+                saveBooleanSetting('useCondSilverShoes', false);
+            }
+
             // 实验室150和100厨具互斥
             if (key === 'useLabEquip150' && checked) {
                 $modal.find('.config-lab-100').prop('checked', false);
@@ -5261,32 +7427,133 @@
                 saveBooleanSetting('useLabEquip150', false);
             }
         });
+
+        $modal.on('change', '.config-cond-select', function() {
+            var $select = $(this);
+            var areaName = normalizeCondAreaName($select.data('area-name'));
+            var nextValue = String($select.val() || '').trim();
+            var previousValue = String($select.data('previous-value') || '').trim();
+            var nextSelection;
+            var conflictAreaName = '';
+
+            if (!nextValue) {
+                saveStoredCondimentSelection(areaName, '');
+                $select.data('previous-value', '');
+                return;
+            }
+
+            nextSelection = getCondAreaSelection(areaName);
+            if (!nextSelection || nextSelection.name !== nextValue) {
+                var areaMeta = getCondAreaMeta(areaName);
+                var condimentMeta = areaMeta ? areaMeta.condiments.find(function(item) {
+                    return item.name === nextValue;
+                }) : null;
+                var nextFlavorKey = condimentMeta ? condimentMeta.flavorKey : '';
+
+                if (nextFlavorKey && nextFlavorKey !== 'Fixed') {
+                    AREA_DEFS.cond.names.some(function(targetAreaName) {
+                        var storedValue;
+                        var storedSelection;
+                        if (normalizeCondAreaName(targetAreaName) === areaName) {
+                            return false;
+                        }
+                        storedValue = getStoredCondimentSelection(targetAreaName);
+                        if (!storedValue) {
+                            return false;
+                        }
+                        storedSelection = getCondAreaSelection(targetAreaName);
+                        if (storedSelection && storedSelection.flavorKey === nextFlavorKey) {
+                            conflictAreaName = normalizeCondAreaName(targetAreaName);
+                            return true;
+                        }
+                        return false;
+                    });
+                }
+            }
+
+            if (!conflictAreaName) {
+                saveStoredCondimentSelection(areaName, nextValue);
+                $select.data('previous-value', nextValue);
+                return;
+            }
+
+            var conflictSelection = getCondAreaSelection(conflictAreaName);
+            setCondConfigSelectValue($select, previousValue);
+            bootbox.confirm({
+                className: 'collection-bootbox-center',
+                message: (conflictSelection ? conflictSelection.flavorLabel : '该') + '类调料已在' + conflictAreaName + '勾选，是否替换？',
+                buttons: {
+                    confirm: { label: '替换', className: 'btn-primary' },
+                    cancel: { label: '取消', className: 'btn-default' }
+                },
+                callback: function(confirmed) {
+                    var $conflictSelect;
+                    var previousCondimentMeta;
+                    var replacementValue = '';
+                    if (!confirmed) {
+                        setCondConfigSelectValue($select, previousValue);
+                        return;
+                    }
+                    previousCondimentMeta = (getCondAreaMeta(areaName) && getCondAreaMeta(areaName).condiments || []).find(function(item) {
+                        return item && item.name === previousValue;
+                    }) || null;
+                    if (previousCondimentMeta && previousCondimentMeta.flavorKey) {
+                        replacementValue = getCondimentNameByAreaFlavor(conflictAreaName, previousCondimentMeta.flavorKey);
+                    }
+
+                    saveStoredCondimentSelection(conflictAreaName, replacementValue);
+                    saveStoredCondimentSelection(areaName, nextValue);
+                    setCondConfigSelectValue($select, nextValue);
+                    $select.data('previous-value', nextValue);
+                    $conflictSelect = $modal.find('.config-cond-select[data-area-name="' + conflictAreaName + '"]');
+                    if ($conflictSelect.length) {
+                        setCondConfigSelectValue($conflictSelect, replacementValue);
+                        $conflictSelect.data('previous-value', replacementValue);
+                    }
+                }
+            });
+        });
     }
 
     // 菜地区配置面板。
     function getVegConfigPanel() {
         var useSilverShoes = loadBooleanSetting('useSilverShoes', false);
         var useGoldenSilkBoots = loadBooleanSetting('useGoldenSilkBoots', false);
+        var useVegAutoAmber = loadBooleanSetting('useVegAutoAmber', false);
+
+        if (useSilverShoes && useGoldenSilkBoots) {
+            useSilverShoes = false;
+            saveBooleanSetting('useSilverShoes', false);
+        }
 
         return [
             '<div class="config-panel">',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
-                            '<input type="checkbox" class="config-checkbox" data-key="useSilverShoes"', useSilverShoes ? ' checked' : '', '>',
-                            '<span class="config-title">是否默认使用银布鞋</span>',
+                            '<input type="checkbox" class="config-checkbox config-veg-silver" data-key="useSilverShoes"', useSilverShoes ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用银布鞋</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于银布鞋时，替换为银布鞋查询（默认期望值按 4 计算）</div>',
+                    '<div class="config-item-desc">佩戴厨具效率低于银布鞋时，默认替换为银布鞋</div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
-                            '<input type="checkbox" class="config-checkbox" data-key="useGoldenSilkBoots"', useGoldenSilkBoots ? ' checked' : '', '>',
-                            '<span class="config-title">是否默认使用金丝筒靴</span>',
+                            '<input type="checkbox" class="config-checkbox config-veg-golden" data-key="useGoldenSilkBoots"', useGoldenSilkBoots ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用金丝筒靴</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于金丝筒靴时，替换为金丝筒靴查询（默认期望值按 8 计算）</div>',
+                    '<div class="config-item-desc">佩戴厨具效率低于金丝筒靴时，默认替换为金丝筒靴</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useVegAutoAmber"', useVegAutoAmber ? ' checked' : '', '>',
+                            '<span class="config-title">自动搭配心法盘</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">未勾选已配遗玉时，自动搭配素材加成类遗玉</div>',
                 '</div>',
             '</div>'
         ].join('');
@@ -5296,26 +7563,142 @@
     function getJadeConfigPanel() {
         var useJadeSilverShoes = loadBooleanSetting('useJadeSilverShoes', false);
         var useJadeGoldenSilkBoots = loadBooleanSetting('useJadeGoldenSilkBoots', false);
+        var useJadeAutoAmber = loadBooleanSetting('useJadeAutoAmber', false);
+
+        if (useJadeSilverShoes && useJadeGoldenSilkBoots) {
+            useJadeSilverShoes = false;
+            saveBooleanSetting('useJadeSilverShoes', false);
+        }
 
         return [
             '<div class="config-panel">',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
-                            '<input type="checkbox" class="config-checkbox" data-key="useJadeSilverShoes"', useJadeSilverShoes ? ' checked' : '', '>',
-                            '<span class="config-title">是否默认使用银布鞋</span>',
+                            '<input type="checkbox" class="config-checkbox config-jade-silver" data-key="useJadeSilverShoes"', useJadeSilverShoes ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用银布鞋</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于银布鞋时，替换为银布鞋查询（默认期望值按 4 计算）</div>',
+                    '<div class="config-item-desc">佩戴厨具效率低于银布鞋时，默认替换为银布鞋</div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
-                            '<input type="checkbox" class="config-checkbox" data-key="useJadeGoldenSilkBoots"', useJadeGoldenSilkBoots ? ' checked' : '', '>',
-                            '<span class="config-title">是否默认使用金丝筒靴</span>',
+                            '<input type="checkbox" class="config-checkbox config-jade-golden" data-key="useJadeGoldenSilkBoots"', useJadeGoldenSilkBoots ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用金丝筒靴</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，当前厨具采集期望值低于金丝筒靴时，替换为金丝筒靴查询（默认期望值按 8 计算）</div>',
+                    '<div class="config-item-desc">佩戴厨具效率低于金丝筒靴时，默认替换为金丝筒靴</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useJadeAutoAmber"', useJadeAutoAmber ? ' checked' : '', '>',
+                            '<span class="config-title">自动搭配心法盘</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">未勾选已配遗玉时，自动搭配采集点类遗玉</div>',
+                '</div>',
+            '</div>'
+        ].join('');
+    }
+
+    function getCondConfigPanel() {
+        var useCondEquip150 = loadBooleanSetting('useCondEquip150', false);
+        var useCondSilverShoes = loadBooleanSetting('useCondSilverShoes', false);
+        var useCondGoldenSilkBoots = loadBooleanSetting('useCondGoldenSilkBoots', false);
+        var useCondAutoAmber = loadBooleanSetting('useCondAutoAmber', false);
+        var useCondExcludeAssassinChef = loadBooleanSetting('useCondExcludeAssassinChef', false);
+
+        if (useCondSilverShoes && useCondGoldenSilkBoots) {
+            useCondSilverShoes = false;
+            saveBooleanSetting('useCondSilverShoes', false);
+        }
+
+        return [
+            '<div class="config-panel">',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useCondEquip150"', useCondEquip150 ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用150技法厨具</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">使用实验室150厨具自动搭配</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox config-cond-silver" data-key="useCondSilverShoes"', useCondSilverShoes ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用银布鞋</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">调料值达标后，剩余厨师默认使用银布鞋</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox config-cond-golden" data-key="useCondGoldenSilkBoots"', useCondGoldenSilkBoots ? ' checked' : '', '>',
+                            '<span class="config-title">默认使用金丝筒靴</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">调料值达标后，剩余厨师默认使用金丝筒靴</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useCondAutoAmber"', useCondAutoAmber ? ' checked' : '', '>',
+                            '<span class="config-title">自动搭配心法盘</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">未勾选已配遗玉时，自动搭配遗玉</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<label class="config-label">',
+                            '<input type="checkbox" class="config-checkbox" data-key="useCondExcludeAssassinChef"', useCondExcludeAssassinChef ? ' checked' : '', '>',
+                            '<span class="config-title">不使用刺客厨师</span>',
+                        '</label>',
+                    '</div>',
+                    '<div class="config-item-desc">查询时排除带开业时间技能的厨师</div>',
+                '</div>',
+                '<div class="config-item">',
+                    '<div class="config-item-header">',
+                        '<span class="config-title">调料查询配置</span>',
+                    '</div>',
+                    '<div class="config-cond-list">',
+                        AREA_DEFS.cond.names.map(function(areaName) {
+                            var areaMeta = getCondAreaMeta(areaName);
+                            var selectedValue = getStoredCondimentSelection(areaName);
+                            var areaDisplayName = normalizeCondAreaName(areaName);
+                            var areaNameColor = getCollectionAreaNameColor(areaDisplayName, 'cond');
+                            var optionList = (areaMeta ? areaMeta.condiments : []).map(function(item) {
+                                var flavorMeta = getCondFlavorConfig(item.flavorKey);
+                                var flavorLabel = flavorMeta ? flavorMeta.label : '';
+                                return {
+                                    display: item.name + (flavorLabel ? '（' + flavorLabel + '）' : ''),
+                                    value: item.name,
+                                    selected: selectedValue === item.name,
+                                    content: buildCondConfigOptionContent(item),
+                                    tokens: [item.name, flavorLabel].join(' ').trim()
+                                };
+                            });
+                            var optionsHtml = typeof window.getOptionsString === 'function'
+                                ? window.getOptionsString(optionList)
+                                : optionList.map(function(option) {
+                                    return '<option value="' + escapeHtml(option.value) + '"' + (option.selected ? ' selected' : '') + '>' + escapeHtml(option.display) + '</option>';
+                                }).join('');
+
+                            return [
+                                '<div class="config-cond-row">',
+                                    '<label class="config-cond-name"' + (areaNameColor ? ' style="color:' + areaNameColor + ';"' : '') + '>' + escapeHtml(areaDisplayName) + '</label>',
+                                    '<select class="selectpicker config-cond-select" data-width="fit" data-container="body" data-dropup-auto="false" data-size="8" data-area-name="' + escapeHtml(areaDisplayName) + '" data-previous-value="' + escapeHtml(selectedValue) + '">',
+                                        optionsHtml,
+                                    '</select>',
+                                '</div>'
+                            ].join('');
+                        }).join(''),
+                    '</div>',
                 '</div>',
             '</div>'
         ].join('');
@@ -5327,34 +7710,39 @@
         var useBeginnerEquip100 = loadBooleanSetting('useBeginnerEquip100', false);
         var useLabAutoAmber = loadBooleanSetting('useLabAutoAmber', false);
 
+        if (useLabEquip150 && useBeginnerEquip100) {
+            useBeginnerEquip100 = false;
+            saveBooleanSetting('useBeginnerEquip100', false);
+        }
+
         return [
             '<div class="config-panel">',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
                             '<input type="checkbox" class="config-checkbox config-lab-150" data-key="useLabEquip150"', useLabEquip150 ? ' checked' : '', '>',
-                            '<span class="config-title">默认使用实验室150厨具</span>',
+                            '<span class="config-title">默认使用150厨具</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，默认使用150技法厨具</div>',
+                    '<div class="config-item-desc">默认用实验室150技法厨具</div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
                             '<input type="checkbox" class="config-checkbox config-lab-100" data-key="useBeginnerEquip100"', useBeginnerEquip100 ? ' checked' : '', '>',
-                            '<span class="config-title">默认使用新手100厨具</span>',
+                            '<span class="config-title">默认使用100厨具</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，默认使用100技法厨具</div>',
+                    '<div class="config-item-desc">默认用新手奖池100技法厨具</div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
                         '<label class="config-label">',
                             '<input type="checkbox" class="config-checkbox" data-key="useLabAutoAmber"', useLabAutoAmber ? ' checked' : '', '>',
-                            '<span class="config-title">未勾选已配遗玉时自动搭配红色遗玉</span>',
+                            '<span class="config-title">自动搭配心法盘</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc">开启后，实验室查询在未勾选已配遗玉时，会自动搭配技法加成类的三星红色遗玉</div>',
+                    '<div class="config-item-desc">未勾选已配遗玉时，自动搭配遗玉</div>',
                 '</div>',
             '</div>'
         ].join('');
