@@ -6102,10 +6102,7 @@
         activeGroup = groups.indexOf(state.activePreviewGroup) >= 0 ? state.activePreviewGroup : groups[0];
 
         pillsHtml = groups.map(function(groupKey) {
-            var count = results.items.filter(function(item) {
-                return item.groupKey === groupKey;
-            }).length;
-            return '<button type="button" class="collection-pill' + (groupKey === activeGroup ? ' is-active' : '') + '" data-action="switch-preview-group" data-group="' + escapeHtml(groupKey) + '">' + escapeHtml(AREA_GROUP_TITLES[groupKey]) + ' ' + count + '</button>';
+            return '<button type="button" class="collection-pill' + (groupKey === activeGroup ? ' is-active' : '') + '" data-action="switch-preview-group" data-group="' + escapeHtml(groupKey) + '">' + escapeHtml(AREA_GROUP_TITLES[groupKey]) + '</button>';
         }).join('');
 
         cardsHtml = results.items.filter(function(item) {
