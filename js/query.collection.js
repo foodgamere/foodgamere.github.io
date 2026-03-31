@@ -6931,6 +6931,11 @@
         var highlightKey = getCollectionHighlightKeyByAreaName(currentArea.areaName);
         var displayCandidates = Array.isArray(candidates) ? candidates : [];
         var condTabBaseId = 'replace-chef-cond-' + Date.now();
+        var replaceSlotFilterId = 'replace-chef-slot-filter-' + Date.now();
+        var replaceSlotMatchId = 'replace-chef-slot-match-' + Date.now();
+        var currentChefItem = currentChefName ? (currentArea.chefs || []).find(function(chef) {
+            return !isEmptyCollectionChef(chef) && chef.name === currentChefName;
+        }) : null;
 
         function getReplaceChefEquipText(chef) {
             if (!chef) {
@@ -6969,6 +6974,19 @@
                 summary: String(meta.greenAmberSummary || '无绿色心法盘'),
                 countLabel: '绿色心法盘*',
                 chipClass: 'is-green-amber'
+            };
+        }
+
+        function getReplaceChefAmberSlotCount(chef) {
+            var amberMeta = getReplaceChefAmberMeta(chef);
+            return toInt(amberMeta.count, 0);
+        }
+
+        function getReplaceChefSlotCounts(chef) {
+            return {
+                red: getRedAmberSlotCountFromChef(chef),
+                green: getGreenAmberSlotCountFromChef(chef),
+                blue: getBlueAmberSlotCountFromChef(chef)
             };
         }
 
@@ -7103,16 +7121,104 @@
             ].join('');
         }
 
+        function buildReplaceChefSlotFilterOptions() {
+            return [
+                { value: '1_1', display: '1 红' },
+                { value: '1_2', display: '2 红' },
+                { value: '1_3', display: '3 红' },
+                { value: '2_1', display: '1 绿' },
+                { value: '2_2', display: '2 绿' },
+                { value: '2_3', display: '3 绿' },
+                { value: '3_1', display: '1 蓝' },
+                { value: '3_2', display: '2 蓝' },
+                { value: '3_3', display: '3 蓝' }
+            ];
+        }
+
+        function getReplaceChefSlotFilterOptionsHtml() {
+            return buildReplaceChefSlotFilterOptions().map(function(option) {
+                return '<option value="' + escapeHtml(option.value) + '">' + escapeHtml(option.display) + '</option>';
+            }).join('');
+        }
+
+        function normalizeReplaceSlotFilterValues(slotFilterValues) {
+            if (!Array.isArray(slotFilterValues)) {
+                if (slotFilterValues === null || typeof slotFilterValues === 'undefined' || slotFilterValues === '') {
+                    return [];
+                }
+                return [String(slotFilterValues)];
+            }
+            return slotFilterValues.map(function(value) {
+                return String(value || '');
+            }).filter(function(value) {
+                return !!value;
+            });
+        }
+
+        function isReplaceChefMatchedBySlotRule(chef, slotRuleValue) {
+            var slotCounts = getReplaceChefSlotCounts(chef);
+            var parts = String(slotRuleValue || '').split('_');
+            var colorType = toInt(parts[0], -1);
+            var expectedCount = toInt(parts[1], -1);
+            var colorKey = colorType === 1 ? 'red' : (colorType === 2 ? 'green' : (colorType === 3 ? 'blue' : ''));
+
+            if (!colorKey || expectedCount < 0 || !slotCounts.hasOwnProperty(colorKey)) {
+                return true;
+            }
+
+            return toInt(slotCounts[colorKey], 0) === expectedCount;
+        }
+
+        function filterReplaceChefCandidates(slotFilterValues, mustMatchAll) {
+            var normalizedValues = normalizeReplaceSlotFilterValues(slotFilterValues);
+            var requireAll = !!mustMatchAll;
+
+            if (!normalizedValues.length) {
+                return displayCandidates.slice();
+            }
+
+            return displayCandidates.filter(function(item) {
+                return requireAll
+                    ? normalizedValues.every(function(slotRuleValue) {
+                        return isReplaceChefMatchedBySlotRule(item.chef, slotRuleValue);
+                    })
+                    : normalizedValues.some(function(slotRuleValue) {
+                        return isReplaceChefMatchedBySlotRule(item.chef, slotRuleValue);
+                    });
+            });
+        }
+
+        function renderReplaceChefDialogBody(slotFilterValues, mustMatchAll) {
+            var filteredCandidates = filterReplaceChefCandidates(slotFilterValues, mustMatchAll);
+            return currentArea.prefix === 'cond'
+                ? renderCondSections(filteredCandidates)
+                : renderReplaceChefList(filteredCandidates.slice(0, 20));
+        }
+
         var dialogHtml = [
             '<div class="replace-chef-dialog">',
                 '<div class="replace-chef-dialog-header">',
                     '<h3>' + (currentChefName ? '替换厨师 - ' : '补位厨师 - ') + escapeHtml(currentArea.areaName) + '</h3>',
-                    currentChefName ? '<div class="replace-chef-current">当前: ' + escapeHtml(currentChefName) + '</div>' : '<div class="replace-chef-current">当前: 空位</div>',
+                    '<div class="replace-chef-header-tools">',
+                        currentChefName ? '<div class="replace-chef-current">当前: ' + escapeHtml(currentChefName) + '</div>' : '<div class="replace-chef-current">当前: 空位</div>',
+                        '<div class="input-group">',
+                            '<div class="select-wrapper input-group-first" data-toggle="tooltip" title="选择槽位,过滤厨师">',
+                            '<select id="' + replaceSlotFilterId + '" class="selectpicker monitor-none" multiple data-width="80px" data-dropdown-align-right="auto" data-none-selected-text="槽位" data-selected-text-format="count>1" data-count-selected-text="{0} 槽位" data-actions-box="true" data-actions-box-only-clear="true" data-deselect-all-text="清空" data-size="9">',
+                                getReplaceChefSlotFilterOptionsHtml(),
+                            '</select>',
+                            '</div>',
+                            '<span class="input-group-btn input-group-last">',
+                                '<label class="btn btn-default">',
+                                    '<input id="' + replaceSlotMatchId + '" type="checkbox" class="monitor-none">',
+                                    '<i class="fa fa-check glyphicon glyphicon-ok"></i>',
+                                    '同时',
+                                '</label>',
+                            '</span>',
+                        '</div>',
+                    '</div>',
                 '</div>',
                 '<div class="replace-chef-dialog-body">',
-                    currentArea.prefix === 'cond'
-                        ? renderCondSections(displayCandidates)
-                        : renderReplaceChefList(displayCandidates.slice(0, 20)),
+                    renderReplaceChefDialogBody([], false),
                 '</div>',
             '</div>'
         ].join('');
@@ -7125,11 +7231,51 @@
             onEscape: true
         });
 
+        dialog.on('shown.bs.modal', function() {
+            try {
+                var $slotFilter = dialog.find('#' + replaceSlotFilterId);
+                var $slotMatchAll = dialog.find('#' + replaceSlotMatchId);
+                function rerenderReplaceChefDialogBody() {
+                    dialog.find('.replace-chef-dialog-body').html(renderReplaceChefDialogBody($slotFilter.val() || [], $slotMatchAll.prop('checked')));
+                }
+                if ($slotFilter.length) {
+                    if ($slotFilter.data('selectpicker')) {
+                        try {
+                            $slotFilter.selectpicker('destroy');
+                        } catch (e) {}
+                    }
+                    $slotFilter.html(getReplaceChefSlotFilterOptionsHtml());
+                    $slotFilter.selectpicker();
+                    $slotFilter.selectpicker('val', []);
+                    $slotFilter.selectpicker('refresh');
+                    $slotFilter.selectpicker('render');
+                    $slotFilter.off('changed.bs.select.replaceSlotFilter').on('changed.bs.select.replaceSlotFilter', function() {
+                        rerenderReplaceChefDialogBody();
+                    });
+                }
+                if ($slotMatchAll.length) {
+                    $slotMatchAll.off('change.replaceSlotFilter').on('change.replaceSlotFilter', function() {
+                        rerenderReplaceChefDialogBody();
+                    });
+                }
+            } catch (e) {}
+        });
+
         // 点击厨师项进行替换
         dialog.on('click', '.replace-chef-item', function() {
             var selectedChefName = $(this).data('chef-name');
             replaceChef(currentArea, currentChefName, selectedChefName);
             dialog.modal('hide');
+        });
+
+        dialog.on('hidden.bs.modal', function() {
+            var $slotFilter = dialog.find('#' + replaceSlotFilterId);
+            if ($slotFilter.length && $slotFilter.data('selectpicker')) {
+                try {
+                    $slotFilter.selectpicker('destroy');
+                } catch (e) {}
+            }
+            dialog.find('#' + replaceSlotMatchId).off('change.replaceSlotFilter');
         });
     }
 
