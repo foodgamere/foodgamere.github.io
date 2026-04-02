@@ -2316,6 +2316,9 @@
             if (!context.applyAmbers) {
                 slots.forEach(function(slot) {
                     if (slot) {
+                        if (slot.data && !slot.__originalData) {
+                            slot.__originalData = cloneData(slot.data);
+                        }
                         slot.data = null;
                     }
                 });
@@ -5337,6 +5340,7 @@
             chef.__originalEquip = chef.equip ? cloneData(chef.equip) : null;
             chef.__originalEquipId = chef.equipId || '';
             chef.__originalEquipDisp = chef.equipDisp || '';
+            chef.__originalGreenAmberPreference = getChefOriginalGreenAmberPreference(chef);
 
             if (typeof window.setDataForChef === 'function') {
                 window.setDataForChef(
@@ -5408,6 +5412,184 @@
         };
 
         return labelMap[String(key || '')] || '';
+    }
+
+    function getCollectionTargetTypeByValueKey(valueKey) {
+        var mapping = {
+            meatVal: 'meat',
+            fishVal: 'fish',
+            vegVal: 'veg',
+            creationVal: 'creation'
+        };
+        return mapping[String(valueKey || '')] || '';
+    }
+
+    function getGreenAmberPreferenceMaterialType(effectType) {
+        var mapping = {
+            Material_Meat: 'meat',
+            Material_Fish: 'fish',
+            Material_Vegetable: 'veg',
+            Material_Creation: 'creation'
+        };
+        return mapping[String(effectType || '')] || '';
+    }
+
+    function getGreenAmberPreferenceAreaType(effectType) {
+        var mapping = {
+            Material_Meat: 'meat',
+            Material_Fish: 'fish',
+            Material_Vegetable: 'veg',
+            Material_Creation: 'creation',
+            Meat: 'meat',
+            Fish: 'fish',
+            Vegetable: 'veg',
+            Creation: 'creation'
+        };
+        return mapping[String(effectType || '')] || '';
+    }
+
+    function getGreenAmberPreferenceValueKey(effectType) {
+        var mapping = {
+            Meat: 'meatVal',
+            Fish: 'fishVal',
+            Vegetable: 'vegVal',
+            Creation: 'creationVal'
+        };
+        return mapping[String(effectType || '')] || '';
+    }
+
+    function getChefOriginalGreenAmberPreference(chef) {
+        var disk;
+        var levelIndex;
+        var preference;
+
+        if (!chef) {
+            return {
+                hasGreenAmber: false,
+                areaTypes: {},
+                areaTypeCount: 0,
+                materialTypes: {},
+                materialTypeCount: 0,
+                jadeKeys: {},
+                jadeKeyCount: 0
+            };
+        }
+        if (chef.__originalGreenAmberPreference) {
+            return chef.__originalGreenAmberPreference;
+        }
+
+        disk = chef.disk || {};
+        levelIndex = Math.max(0, toInt(disk.level, 1) - 1);
+        preference = {
+            hasGreenAmber: false,
+            areaTypes: {},
+            areaTypeCount: 0,
+            materialTypes: {},
+            materialTypeCount: 0,
+            jadeKeys: {},
+            jadeKeyCount: 0
+        };
+
+        if (!Array.isArray(disk.ambers)) {
+            chef.__originalGreenAmberPreference = preference;
+            return preference;
+        }
+
+        disk.ambers.forEach(function(slot) {
+            var amber;
+            var effects;
+            if (!slot || slot.type !== 2 || !slot.data) {
+                amber = slot && slot.type === 2 ? (slot.__originalData || null) : null;
+            } else {
+                amber = slot.data;
+            }
+            if (!amber) {
+                return;
+            }
+            preference.hasGreenAmber = true;
+            effects = Array.isArray(amber.allEffect) ? (amber.allEffect[levelIndex] || []) : [];
+            effects.forEach(function(effect) {
+                var areaType = getGreenAmberPreferenceAreaType(effect && effect.type);
+                var materialType = getGreenAmberPreferenceMaterialType(effect && effect.type);
+                var jadeKey = getGreenAmberPreferenceValueKey(effect && effect.type);
+                if (areaType) {
+                    preference.areaTypes[areaType] = true;
+                }
+                if (materialType) {
+                    preference.materialTypes[materialType] = true;
+                }
+                if (jadeKey) {
+                    preference.jadeKeys[jadeKey] = true;
+                }
+            });
+        });
+
+        preference.areaTypeCount = Object.keys(preference.areaTypes).length;
+        preference.materialTypeCount = Object.keys(preference.materialTypes).length;
+        preference.jadeKeyCount = Object.keys(preference.jadeKeys).length;
+        chef.__originalGreenAmberPreference = preference;
+        return preference;
+    }
+
+    function isCollectionAmberPreferenceEnabled(areaPrefix, queryContext) {
+        if (!queryContext || !queryContext.applyAmbers) {
+            return false;
+        }
+        return areaPrefix === 'veg' || areaPrefix === 'jade';
+    }
+
+    function isChefAllowedForAreaByOriginalGreenAmber(chef, areaName, areaPrefix, queryContext) {
+        var preference;
+        var vegTargetType;
+        var jadeTargetKeys;
+        var currentJadeKeys;
+        var hasAnyMatchedJadeKey;
+
+        if (!isCollectionAmberPreferenceEnabled(areaPrefix, queryContext)) {
+            return true;
+        }
+
+        preference = getChefOriginalGreenAmberPreference(chef);
+
+        if (areaPrefix === 'veg') {
+            if (preference.materialTypeCount > 0) {
+                vegTargetType = getCollectionTargetTypeByValueKey(getVegTargetConfig(areaName).key);
+                return !!(vegTargetType && preference.materialTypes[vegTargetType]);
+            }
+            if (!preference.areaTypeCount) {
+                return true;
+            }
+            vegTargetType = getCollectionTargetTypeByValueKey(getVegTargetConfig(areaName).key);
+            return !!(vegTargetType && preference.areaTypes[vegTargetType]);
+        }
+
+        if (areaPrefix === 'jade') {
+            if (preference.materialTypeCount > 0) {
+                return false;
+            }
+            if (!preference.jadeKeyCount) {
+                return true;
+            }
+            jadeTargetKeys = (getJadeTargetConfig(areaName).keys || []).slice().sort();
+            currentJadeKeys = Object.keys(preference.jadeKeys).sort();
+            if (!jadeTargetKeys.length || !currentJadeKeys.length) {
+                return true;
+            }
+            if (currentJadeKeys.length === 1) {
+                return jadeTargetKeys.indexOf(currentJadeKeys[0]) >= 0;
+            }
+            hasAnyMatchedJadeKey = jadeTargetKeys.some(function(key) {
+                return currentJadeKeys.indexOf(key) >= 0;
+            });
+            if (!hasAnyMatchedJadeKey) {
+                return false;
+            }
+            return jadeTargetKeys.every(function(key) {
+                return currentJadeKeys.indexOf(key) >= 0;
+            });
+        }
+
+        return true;
     }
 
     function buildJadeValueDisplayHtml(areaName, item) {
@@ -6114,6 +6296,9 @@
             // 判断前两名是否与地区要求完全匹配
             var isMatched = topTwoKeys[0] === requiredKeysSorted[0] && topTwoKeys[1] === requiredKeysSorted[1];
 
+            if (!isChefAllowedForAreaByOriginalGreenAmber(clonedChef, areaItem.name, 'jade', chefPoolData.context)) {
+                return list;
+            }
 
             if (isMatched) {
                 matchedCount++;
@@ -6589,6 +6774,7 @@
             }, metric);
         }).filter(function(item) {
             return item.rawValue > 0
+                && isChefAllowedForAreaByOriginalGreenAmber(item.chef, areaItem.name, 'veg', chefPoolData.context)
                 && !item.meta.hasRareGuestSkill
                 && !isCollectionChefExcludedForArea(areaItem.prefix, item.chef, item.meta, chefPoolData.context, commonFilterSettings);
         }));
@@ -8261,6 +8447,9 @@
                 if (shouldHideJadeCollectionReplaceChef(candidateItem, keyword)) {
                     return false;
                 }
+                if (!isChefAllowedForAreaByOriginalGreenAmber(chef, areaItem.name, areaItem.prefix, chefPoolData.context)) {
+                    return false;
+                }
                 return true;
             });
         }
@@ -9174,7 +9363,7 @@
                             '<span class="config-title">自动搭配心法盘</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正绿色素材类遗玉。</div><div>勾选已配遗玉：按地区自动替换并补齐绿色素材类遗玉，结果和查询总结都会展示替换内容。</div></div>',
+                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正绿色素材类遗玉。</div><div>勾选已配遗玉：根据已配遗玉与地区契合度智能分配并补齐绿色素材类遗玉。</div></div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
@@ -9229,7 +9418,7 @@
                             '<span class="config-title">自动搭配心法盘</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正绿色采集点类遗玉。</div><div>勾选已配遗玉：按地区自动替换并补齐绿色采集点类遗玉，结果和查询总结都会展示替换内容。</div></div>',
+                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正绿色采集点类遗玉。</div><div>勾选已配遗玉：根据已配遗玉与地区契合度智能分配并补齐绿色采集点类遗玉。</div></div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
@@ -9301,7 +9490,7 @@
                             '<span class="config-title">自动搭配心法盘</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc"><div>未勾选已配遗玉：按调料类型自动补齐并校正对应遗玉。</div><div>勾选已配遗玉：按调料类型自动替换并补齐对应遗玉，结果和查询总结都会展示替换内容。</div></div>',
+                    '<div class="config-item-desc"><div>未勾选已配遗玉：按调料类型自动补齐并校正对应遗玉。</div><div>勾选已配遗玉：按调料类型自动替换并补齐对应遗玉，查询总结展示替换内容。</div></div>',
                 '</div>',
                 '<div class="config-item">',
                     '<div class="config-item-header">',
@@ -9392,7 +9581,7 @@
                             '<span class="config-title">自动搭配心法盘</span>',
                         '</label>',
                     '</div>',
-                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正红色技法类遗玉。</div><div>勾选已配遗玉：按地区自动替换并补齐红色技法类遗玉，结果和查询总结都会展示替换内容。</div></div>',
+                    '<div class="config-item-desc"><div>未勾选已配遗玉：按地区自动补齐并校正红色技法类遗玉。</div><div>勾选已配遗玉：按地区自动替换并补齐红色技法类遗玉，查询总结展示替换内容。</div></div>',
                 '</div>',
             '</div>'
         ].join('');
