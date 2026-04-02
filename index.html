@@ -2177,6 +2177,9 @@
                             <button id="btn-banquet-auto" class="btn btn-primary" type="button">
                                 自动计算
                             </button>
+                            <button id="btn-banquet-settings" class="btn btn-default btn-sm" type="button" style="display: inline-block; margin-left: 3px; vertical-align: top; margin-top: 1px;" title="风云宴设置">
+                                <span class="glyphicon glyphicon-cog"></span>
+                            </button>
                         </div>
                         <div id="banquet-progress-wrapper" class="hidden" style="max-width: 1130px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px;">
                             <div style="flex: 1; height: 8px; background: #e8e8e8; border-radius: 4px; overflow: hidden;">
@@ -3128,6 +3131,7 @@
     var STORAGE_ACTIVE_KEY = 'competition_algorithm_active';
     var STORAGE_AUTO_CONDIMENT_KEY = 'competition_auto_condiment';
     var STORAGE_DEFAULT_NEWBIE_EQUIP_KEY = 'competition_default_newbie_equip';
+    var STORAGE_BANQUET_NEWBIE_EQUIP_KEY = 'banquet_newbie_equip';
     var algorithmList = [];
     var activeAlgorithmId = null;
 
@@ -3268,6 +3272,28 @@
         } catch (e) {}
     }
 
+    function getBanquetNewbieEquipEnabled() {
+        try {
+            return localStorage.getItem(STORAGE_BANQUET_NEWBIE_EQUIP_KEY) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function setBanquetNewbieEquipEnabled(enabled) {
+        try {
+            localStorage.setItem(STORAGE_BANQUET_NEWBIE_EQUIP_KEY, enabled ? '1' : '0');
+        } catch (e) {}
+    }
+
+    function syncBanquetNewbieEquipToggle() {
+        var enabled = getBanquetNewbieEquipEnabled();
+        $('#chk-banquet-newbie-equip').prop('checked', enabled);
+        if ($('#chk-banquet-newbie-equip').parent().hasClass('toggle')) {
+            $('#chk-banquet-newbie-equip').bootstrapToggle(enabled ? 'on' : 'off');
+        }
+    }
+
     function restoreDefaultAlgorithm() {
         if (typeof window.restoreDefaultCompetitionOptimizer === 'function') {
             window.restoreDefaultCompetitionOptimizer();
@@ -3288,6 +3314,7 @@
 
     window.getCompetitionAutoCondimentEnabled = getAutoCondimentEnabled;
     window.getCompetitionDefaultNewbieEquipEnabled = getDefaultNewbieEquipEnabled;
+    window.getBanquetNewbieEquipEnabled = getBanquetNewbieEquipEnabled;
     window.isDefaultCompetitionMode = isDefaultCompetitionMode;
 
     function executeAlgorithm(code) {
@@ -3352,9 +3379,28 @@
             '</div>' +
         '</div>';
         $('body').append(modalHtml);
+
+        var banquetModalHtml = '<div id="banquet-settings-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; align-items: center; justify-content: center;">' +
+            '<div style="background: white; border-radius: 8px; padding: 20px; max-width: 520px; width: 90%; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">' +
+                '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #e0e0e0; padding-bottom: 10px;">' +
+                    '<h4 style="margin: 0; font-size: 18px; font-weight: bold;">风云宴设置</h4>' +
+                    '<button id="close-banquet-settings-modal" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #999; line-height: 1;">&times;</button>' +
+                '</div>' +
+                '<div style="margin-top: 6px; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">' +
+                    '<div>' +
+                        '<div style="font-weight: bold; font-size: 14px;">自动搭配新手厨具</div>' +
+                        '<div style="font-size: 12px; color: #888; margin-top: 4px;">勾选后，会按新手奖池厨具做自动搭配；勾选已配厨具时仅补无厨具厨师</div>' +
+                    '</div>' +
+                    '<input type="checkbox" id="chk-banquet-newbie-equip" data-toggle="toggle" data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="56px">' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+        $('body').append(banquetModalHtml);
+
         if ($.fn.bootstrapToggle) {
             $('#chk-competition-auto-condiment').bootstrapToggle();
             $('#chk-competition-default-newbie-equip').bootstrapToggle();
+            $('#chk-banquet-newbie-equip').bootstrapToggle();
         }
     }
 
@@ -3404,6 +3450,21 @@
 
 
     function initEventListeners() {
+        $(document).on('click', '#btn-banquet-settings', function() {
+            syncBanquetNewbieEquipToggle();
+            $('#banquet-settings-modal').css('display', 'flex');
+        });
+
+        $(document).on('click', '#close-banquet-settings-modal', function() {
+            $('#banquet-settings-modal').hide();
+        });
+
+        $(document).on('click', '#banquet-settings-modal', function(e) {
+            if (e.target.id === 'banquet-settings-modal') {
+                $(this).hide();
+            }
+        });
+
         $(document).on('click', '#btn-competition-settings', function() {
             updateCompetitionSettingsMode();
             $('#competition-settings-modal').css('display', 'flex');
@@ -3501,6 +3562,10 @@
             setDefaultNewbieEquipEnabled($(this).prop('checked'));
         });
 
+        $(document).on('change', '#chk-banquet-newbie-equip', function() {
+            setBanquetNewbieEquipEnabled($(this).prop('checked'));
+        });
+
         $(document).on('click', '#btn-delete-current-algorithm', function() {
             // 获取当前选中的算法（从下拉框）
             var selectedId = $('#algorithm-select').val();
@@ -3555,6 +3620,7 @@
         
         initDisplayControl();
         createSettingsModal();
+        syncBanquetNewbieEquipToggle();
         initEventListeners();
         
     }
