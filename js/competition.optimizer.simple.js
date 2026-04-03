@@ -432,9 +432,63 @@ var DefaultCompetitionOptimizer = (function() {
         return remainMaterials;
     }
 
+    function _sanitizeRecipeQuantityValue(qty) {
+        if (qty == null || !isFinite(qty)) return 0;
+        qty = Math.floor(qty);
+        return qty < 0 ? 0 : qty;
+    }
+
+    function _hasInvalidRecipeQuantities() {
+        if (!_simState || !_simState[0]) return false;
+        for (var ci = 0; ci < _simState[0].length; ci++) {
+            for (var ri = 0; ri < 3; ri++) {
+                var rec = _simState[0][ci].recipes[ri];
+                if (!rec || !rec.data) continue;
+                if (rec.quantity == null || !isFinite(rec.quantity) || rec.quantity < 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function _sanitizeSimStateRecipeQuantities() {
+        if (!_simState || !_simState[0]) return false;
+        var changed = false;
+        for (var ci = 0; ci < _simState[0].length; ci++) {
+            for (var ri = 0; ri < 3; ri++) {
+                var rec = _simState[0][ci].recipes[ri];
+                if (!rec) continue;
+
+                var safeMax = _sanitizeRecipeQuantityValue(rec.max);
+                if (rec.max !== safeMax) {
+                    rec.max = safeMax;
+                    changed = true;
+                }
+
+                if (!rec.data) {
+                    if (rec.quantity !== 0 || rec.max !== 0) {
+                        rec.quantity = 0;
+                        rec.max = 0;
+                        changed = true;
+                    }
+                    continue;
+                }
+
+                var safeQty = _sanitizeRecipeQuantityValue(rec.quantity);
+                if (rec.quantity !== safeQty) {
+                    rec.quantity = safeQty;
+                    changed = true;
+                }
+            }
+        }
+        return changed;
+    }
+
 
     function _checkGlobalMaterialFeasible() {
         if (!_materialsAll || !_rule.MaterialsLimit) return true;
+        if (_hasInvalidRecipeQuantities()) return false;
         var totalUsed = {};
         for (var ci = 0; ci < _simState[0].length; ci++) {
             for (var ri = 0; ri < 3; ri++) {
@@ -530,6 +584,7 @@ var DefaultCompetitionOptimizer = (function() {
         var savedState = _simState;
         try {
             _simState = _cloneSimState(simState);
+            _sanitizeSimStateRecipeQuantities();
             _applyChefData();
 
             if (!_fixSkillInvalidRecipes()) {
@@ -537,7 +592,9 @@ var DefaultCompetitionOptimizer = (function() {
             }
 
             if (!_checkGlobalMaterialFeasible()) {
+                _sanitizeSimStateRecipeQuantities();
                 _fixGlobalMaterialOverflow();
+                _sanitizeSimStateRecipeQuantities();
                 _applyChefData();
                 if (!_checkGlobalMaterialFeasible()) {
                     return null;
@@ -703,6 +760,7 @@ var DefaultCompetitionOptimizer = (function() {
         }
 
         if (_rule.DisableMultiCookbook) qty = Math.min(qty, 1);
+        qty = _sanitizeRecipeQuantityValue(qty);
 
         slot.recipes[recipeIndex] = {data: recipeData, quantity: qty, max: qty};
     }
