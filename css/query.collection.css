@@ -365,6 +365,36 @@
     flex-shrink: 0;
 }
 
+.collection-result-lock-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #8a5a00;
+    background: #fff7e6;
+    border: 1px solid #f0c36d;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.collection-result-lock-btn.is-locked {
+    color: #fff;
+    background: #f0ad4e;
+    border-color: #e59a2d;
+}
+
+.collection-result-lock-btn:hover {
+    background: #fff2cc;
+    border-color: #e6b85c;
+}
+
+.collection-result-lock-btn.is-locked:hover {
+    background: #ec9a2f;
+    border-color: #d8891f;
+}
+
 .collection-result-save-btn:hover {
     background: #f6f8fa;
     border-color: #2196f3;
@@ -566,6 +596,15 @@
     border: 1px solid #e8edf3;
 }
 
+.collection-result-card.is-locked {
+    box-shadow: inset 0 0 0 1px rgba(240, 173, 78, 0.22);
+}
+
+.collection-result-chef-card.is-locked {
+    border-color: #f4d29a;
+    background: #fffaf1;
+}
+
 .collection-result-card-lab .collection-result-chef-list,
 .collection-result-card-lab .collection-result-chef-card,
 .collection-result-card-lab .collection-result-chef-meta,
@@ -586,6 +625,11 @@
 .collection-result-chef-empty {
     font-size: 12px;
     color: #8a97a3;
+}
+
+.collection-result-summary-pill.is-locked {
+    background: #fff3cd;
+    color: #8a5a00;
 }
 
 .collection-result-chef-head {
@@ -728,6 +772,12 @@
 
 .collection-result-chef-replace-btn:active {
     background: #1565c0;
+}
+
+.collection-result-chef-replace-btn[disabled],
+.collection-result-chef-remove-btn[disabled] {
+    cursor: not-allowed;
+    opacity: 0.7;
 }
 
 .collection-result-chef-remove-btn:hover {
@@ -1004,6 +1054,17 @@
     border-color: #2196f3;
 }
 
+.replace-chef-item.is-locked {
+    cursor: not-allowed;
+    background: #faf7f2;
+    border-color: #ead5b0;
+}
+
+.replace-chef-item.is-locked:hover {
+    background: #faf7f2;
+    border-color: #ead5b0;
+}
+
 .replace-chef-item-info {
     display: flex;
     align-items: center;
@@ -1171,6 +1232,11 @@
     font-size: 10px;
     line-height: 18px;
     font-weight: 600;
+}
+
+.replace-chef-item-assigned.is-locked {
+    background: rgba(240, 173, 78, 0.16);
+    color: #8a5a00;
 }
 
 .replace-chef-item.is-assigned-other-area {
@@ -2429,6 +2495,11 @@
     }
 
     .collection-result-save-btn {
+        padding: 4px 8px;
+        font-size: 11px;
+    }
+
+    .collection-result-lock-btn {
         padding: 4px 8px;
         font-size: 11px;
     }

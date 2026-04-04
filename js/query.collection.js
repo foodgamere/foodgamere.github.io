@@ -3168,6 +3168,112 @@
         }) || null;
     }
 
+    function getCollectionAreaResultKey(prefix, areaName) {
+        return String(prefix || '') + '::' + String(areaName || '');
+    }
+
+    function getLockedCollectionResults() {
+        if (!state.queryResults || !Array.isArray(state.queryResults.items)) {
+            return [];
+        }
+        return state.queryResults.items.filter(function(result) {
+            return !!(result && result.isLocked);
+        });
+    }
+
+    function getLockedCollectionChefAreaMap(excludedAreaName) {
+        var areaMap = {};
+        getLockedCollectionResults().forEach(function(result) {
+            if (!result || result.areaName === excludedAreaName) {
+                return;
+            }
+            (result.chefs || []).forEach(function(chef) {
+                if (!isEmptyCollectionChef(chef) && chef && chef.name) {
+                    areaMap[String(chef.name)] = result.areaName;
+                }
+            });
+        });
+        return areaMap;
+    }
+
+    function getLockedCollectionChefNameSet(excludedAreaName) {
+        var nameSet = {};
+        var areaMap = getLockedCollectionChefAreaMap(excludedAreaName);
+        Object.keys(areaMap).forEach(function(name) {
+            nameSet[name] = true;
+        });
+        return nameSet;
+    }
+
+    function isCollectionAreaLocked(areaName) {
+        var areaResult = getCollectionAreaResult(areaName);
+        return !!(areaResult && areaResult.isLocked);
+    }
+
+    function toggleCollectionAreaLock(areaName) {
+        var areaResult = getCollectionAreaResult(areaName);
+        if (!areaResult) {
+            return;
+        }
+        areaResult.isLocked = !areaResult.isLocked;
+        render();
+    }
+
+    function mergeCollectionQueryResults(orderedAreaItems, newQueryResults, lockedResults) {
+        var resultMap = {};
+        var orderedKeys = [];
+        var groupOrder = [];
+
+        (lockedResults || []).forEach(function(result) {
+            if (!result) {
+                return;
+            }
+            result.isLocked = true;
+            resultMap[getCollectionAreaResultKey(result.prefix, result.areaName)] = result;
+        });
+
+        if (newQueryResults && Array.isArray(newQueryResults.items)) {
+            newQueryResults.items.forEach(function(result) {
+                if (!result) {
+                    return;
+                }
+                result.isLocked = !!result.isLocked;
+                resultMap[getCollectionAreaResultKey(result.prefix, result.areaName)] = result;
+            });
+        }
+
+        (orderedAreaItems || []).forEach(function(areaItem) {
+            var resultKey = getCollectionAreaResultKey(areaItem && areaItem.prefix, areaItem && areaItem.name);
+            if (orderedKeys.indexOf(resultKey) < 0) {
+                orderedKeys.push(resultKey);
+            }
+        });
+
+        Object.keys(resultMap).forEach(function(resultKey) {
+            if (orderedKeys.indexOf(resultKey) < 0) {
+                orderedKeys.push(resultKey);
+            }
+        });
+
+        var items = orderedKeys.map(function(resultKey) {
+            return resultMap[resultKey] || null;
+        }).filter(function(result) {
+            return !!result;
+        });
+
+        items.forEach(function(result) {
+            if (groupOrder.indexOf(result.groupKey) < 0) {
+                groupOrder.push(result.groupKey);
+            }
+        });
+
+        return {
+            generatedAt: Date.now(),
+            groupOrder: groupOrder,
+            items: items
+        };
+    }
+
     function getCollectionResultChefEntry(areaName, chefId, chefName) {
         var areaResult = getCollectionAreaResult(areaName);
         var chefIndex = -1;
@@ -5917,11 +6023,13 @@
     // 1) 应用本地数据与筛选条件
     // 2) 排除已保存编队占用厨师
     // 3) 预计算素材元数据 __queryMeta
-    function buildCollectionChefPool() {
+    function buildCollectionChefPool(options) {
+        options = options || {};
         var context = getCurrentCollectionContext();
         var ruleChefs;
         var ownedState;
         var savedChefNameSet;
+        var extraExcludedChefNameSet = options.excludedChefNameSet || {};
         var ultimateData;
         var partialAdds;
         var commonFilterSettings = getCollectionCommonFilterSettings();
@@ -5960,7 +6068,7 @@
 
         ruleChefs.forEach(function(chef) {
             var meta;
-            if (!chef || !chef.name || savedChefNameSet[chef.name]) {
+            if (!chef || !chef.name || savedChefNameSet[chef.name] || extraExcludedChefNameSet[chef.name]) {
                 return;
             }
             applyLocalChefDataForQuery(chef, context);
@@ -7627,6 +7735,7 @@
     function getCollectionResultChefHtml(item, areaName, options) {
         options = options || {};
         var readOnly = !!options.readOnly;
+        var areaLocked = !readOnly && isCollectionAreaLocked(areaName);
         var equipHtml = readOnly ? getCollectionEquipStaticHtml(item) : getCollectionEquipSelectHtml(item, areaName);
         var condAmberSummaryHtml = buildCondAmberSummaryHtml(item);
         var greenAmberMetaHtml = readOnly
@@ -7638,8 +7747,10 @@
 
         if (isEmptyCollectionChef(item)) {
             return [
-                '<div class="collection-result-chef-card is-empty collection-result-chef-empty-trigger" data-area-name="', escapeHtml(areaName), '">',
-                    '<div class="collection-result-chef-empty">空位（点击补位）</div>',
+                '<div class="collection-result-chef-card is-empty',
+                    areaLocked ? ' is-locked' : ' collection-result-chef-empty-trigger',
+                    '" data-area-name="', escapeHtml(areaName), '">',
+                    '<div class="collection-result-chef-empty">', areaLocked ? '空位（已锁定）' : '空位（点击补位）', '</div>',
                 '</div>'
             ].join('');
         }
@@ -7783,7 +7894,7 @@
                 readOnly ? '' : '<div class="collection-result-chef-meta-content">',
                 metaHtml.join(''),
                 readOnly ? '' : '</div>',
-                readOnly ? '' : '<div class="collection-result-chef-meta-action"><button class="collection-result-chef-remove-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '">移除</button></div>',
+                readOnly ? '' : '<div class="collection-result-chef-meta-action"><button class="collection-result-chef-remove-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '"' + (areaLocked ? ' disabled title="该地区已锁定"' : '') + '>' + (areaLocked ? '已锁定' : '移除') + '</button></div>',
             '</div>'
         ].join('');
         if (secondRowHtml.length > 0) {
@@ -7791,7 +7902,7 @@
         }
 
         return [
-            '<div class="collection-result-chef-card">',
+            '<div class="collection-result-chef-card', areaLocked ? ' is-locked' : '', '">',
                 '<div class="collection-result-chef-head">',
                     '<div class="collection-result-chef-head-left">',
                         '<span class="collection-result-chef-name">', escapeHtml(item.name), '</span>',
@@ -7800,7 +7911,7 @@
                     '</div>',
                     readOnly ? '' : [
                         '<div class="collection-result-chef-head-right">',
-                            '<button class="collection-result-chef-replace-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '">替换</button>',
+                            '<button class="collection-result-chef-replace-btn" data-area-name="' + escapeHtml(areaName) + '" data-chef-name="' + escapeHtml(item.name) + '"' + (areaLocked ? ' disabled title="该地区已锁定"' : '') + '>' + (areaLocked ? '已锁定' : '替换') + '</button>',
                         '</div>'
                     ].join(''),
                 '</div>',
@@ -7868,6 +7979,7 @@
         var cardClass = isCollapsed ? ' is-collapsed' : '';
         var iconClass = isCollapsed ? 'glyphicon-chevron-down' : 'glyphicon-chevron-up';
         var chefListStyle = isCollapsed ? ' style="display:none;"' : '';
+        var isLocked = !!result.isLocked;
 
         if (result.prefix === 'lab') {
             summaryHtml.push('<span class="collection-result-summary-pill">总技法 ' + result.totalValue + '</span>');
@@ -7889,10 +8001,13 @@
         if (result.insufficient && result.prefix !== 'cond') {
             summaryHtml.push('<span class="collection-result-summary-pill is-warning">未达标</span>');
         }
+        if (isLocked) {
+            summaryHtml.push('<span class="collection-result-summary-pill is-locked">已锁定</span>');
+        }
         summaryHtml.push('<button type="button" class="collection-result-summary-btn" data-action="view-area-summary" data-area-name="' + escapeHtml(result.areaName) + '">查询总结</button>');
 
         return [
-            '<div class="collection-result-card collection-result-card-', escapeHtml(result.prefix), cardClass, '" data-area-name="', escapeHtml(result.areaName), '"' + cardStyle + '>',
+            '<div class="collection-result-card collection-result-card-', escapeHtml(result.prefix), cardClass, isLocked ? ' is-locked' : '', '" data-area-name="', escapeHtml(result.areaName), '"' + cardStyle + '>',
                 '<div class="collection-result-card-head">',
                     '<div class="collection-result-card-title-wrap">',
                         '<div class="collection-result-card-title">',
@@ -7902,6 +8017,7 @@
                     '</div>',
                     options.hideActions ? '' : [
                         '<div class="collection-result-card-actions">',
+                            '<button class="collection-result-lock-btn', isLocked ? ' is-locked' : '', '" data-area-name="' + escapeHtml(result.areaName) + '">' + (isLocked ? '解锁' : '锁定') + '</button>',
                             '<button class="collection-result-save-btn" data-area-name="' + escapeHtml(result.areaName) + '" data-area-prefix="' + escapeHtml(result.prefix) + '">保存</button>',
                             '<button class="collection-result-toggle-btn" data-area-name="' + escapeHtml(result.areaName) + '">',
                                 '<span class="glyphicon ', iconClass, '"></span>',
@@ -8160,8 +8276,20 @@
         render();
 
         window.setTimeout(function() {
-            var chefPoolData = buildCollectionChefPool();
+            var lockedResults = getLockedCollectionResults();
+            var lockedAreaMap = {};
+            var lockedChefNameSet = getLockedCollectionChefNameSet();
+            var sortData;
+            var chefPoolData = buildCollectionChefPool({
+                excludedChefNameSet: lockedChefNameSet
+            });
             var areaItems;
+
+            lockedResults.forEach(function(result) {
+                if (result && result.areaName) {
+                    lockedAreaMap[result.areaName] = true;
+                }
+            });
 
             if (chefPoolData.error) {
                 state.queryLoading = false;
@@ -8172,11 +8300,12 @@
                 return;
             }
 
-            areaItems = buildSortItems().items.filter(function(item) {
-                return item.people > 0;
+            sortData = buildSortItems();
+            areaItems = sortData.items.filter(function(item) {
+                return item.people > 0 && !lockedAreaMap[item.name];
             });
 
-            if (!areaItems.length) {
+            if (!areaItems.length && !lockedResults.length) {
                 state.queryLoading = false;
                 state.queryResults = null;
                 state.queryChefPool = null;
@@ -8185,17 +8314,21 @@
                 return;
             }
 
-            if (!chefPoolData.chefs.length) {
+            if (!chefPoolData.chefs.length && areaItems.length) {
                 state.queryLoading = false;
-                state.queryResults = null;
-                state.queryChefPool = null;
+                state.queryResults = lockedResults.length ? mergeCollectionQueryResults(sortData.items, null, lockedResults) : null;
+                state.queryChefPool = chefPoolData;
                 render();
                 showPlaceholder('查询失败', '当前没有可参与查询的厨师');
                 return;
             }
 
             state.queryChefPool = chefPoolData;
-            state.queryResults = executeCollectionQuery(areaItems, chefPoolData);
+            state.queryResults = mergeCollectionQueryResults(
+                sortData.items,
+                areaItems.length ? executeCollectionQuery(areaItems, chefPoolData) : null,
+                lockedResults
+            );
             state.queryLoading = false;
             if (state.queryResults.groupOrder.length) {
                 state.activePreviewGroup = state.queryResults.groupOrder[0];
@@ -8529,6 +8662,11 @@
         saveAreaCombination(areaName, areaPrefix);
     });
 
+    $(document).on('click', '.collection-result-lock-btn', function(e) {
+        e.stopPropagation();
+        toggleCollectionAreaLock($(this).data('area-name'));
+    });
+
     $(document).on('click', '.collection-result-toggle-btn', function(e) {
         e.stopPropagation();
         this.blur();
@@ -8669,6 +8807,12 @@
         }
 
         var assignedMap = {};
+        var lockedChefAreaMap;
+        if (currentArea.isLocked) {
+            alert('该地区已锁定，不能替换厨师');
+            return;
+        }
+        lockedChefAreaMap = getLockedCollectionChefAreaMap(currentArea.areaName);
         state.queryResults.items.forEach(function(result) {
             (result.chefs || []).forEach(function(chef) {
                 if (isEmptyCollectionChef(chef)) {
@@ -8691,15 +8835,16 @@
         var candidateChefs = availableChefs.slice();
 
         // 显示替换对话框；候选指标改为分页按需计算，避免一次性全量重算卡顿。
-        showReplaceChefDialogUI(currentArea, currentChefName, candidateChefs, chefPoolData, assignedMap);
+        showReplaceChefDialogUI(currentArea, currentChefName, candidateChefs, chefPoolData, assignedMap, lockedChefAreaMap);
     }
 
     // 渲染替换弹窗UI。
     // 菜地区会展示四维采集点和素材三指标（素材/暴击素材/暴击率）。
-    function showReplaceChefDialogUI(currentArea, currentChefName, rawCandidateChefs, chefPoolData, assignedMap) {
+    function showReplaceChefDialogUI(currentArea, currentChefName, rawCandidateChefs, chefPoolData, assignedMap, lockedChefAreaMap) {
         var highlightKey = getCollectionHighlightKeyByAreaName(currentArea.areaName);
         var displayCandidates = [];
         var candidateSourceChefs = Array.isArray(rawCandidateChefs) ? rawCandidateChefs : [];
+        lockedChefAreaMap = lockedChefAreaMap || {};
         var condTabBaseId = 'replace-chef-cond-' + Date.now();
         var replaceSearchInputId = 'replace-chef-search-' + Date.now();
         var replaceSlotFilterId = 'replace-chef-slot-filter-' + Date.now();
@@ -8779,6 +8924,7 @@
             var clonedChef;
             var metric;
             var assignedArea;
+            var lockedArea;
             var auraInfo;
             var totalContribution;
 
@@ -8829,6 +8975,7 @@
             }
 
             assignedArea = assignedMap[String(clonedChef.name || '')] || '';
+            lockedArea = lockedChefAreaMap[String(clonedChef.name || '')] || '';
             if (areaItem.prefix === 'lab') {
                 var auraContributionInfo;
                 auraInfo = checkAuraChef(clonedChef, areaItem.name, chefPoolData.context);
@@ -8842,6 +8989,8 @@
                     auraMultiplier: auraContributionInfo.auraMultiplier,
                     auraInfo: auraInfo,
                     assignedArea: assignedArea,
+                    lockedArea: lockedArea,
+                    isLocked: !!lockedArea,
                     isAssignedOtherArea: assignedArea && assignedArea !== currentArea.areaName
                 };
                 return cachedCandidateMap[chefKey];
@@ -8851,6 +9000,8 @@
                 chef: clonedChef,
                 metric: metric,
                 assignedArea: assignedArea,
+                lockedArea: lockedArea,
+                isLocked: !!lockedArea,
                 isAssignedOtherArea: assignedArea && assignedArea !== currentArea.areaName
             };
             return cachedCandidateMap[chefKey];
@@ -8936,7 +9087,9 @@
                 rarityStars += '★';
             }
 
-            if (item.assignedArea) {
+            if (item.lockedArea) {
+                assignedAreaTag = '<span class="replace-chef-item-assigned is-locked">已锁定于：' + escapeHtml(item.lockedArea) + '</span>';
+            } else if (item.assignedArea) {
                 assignedAreaTag = '<span class="replace-chef-item-assigned">已分配给：' + escapeHtml(item.assignedArea) + '</span>';
             }
 
@@ -8955,7 +9108,10 @@
             }
 
             return [
-                '<div class="replace-chef-item' + (item.isAssignedOtherArea ? ' is-assigned-other-area' : '') + '" data-chef-name="' + escapeHtml(chef.name) + '">',
+                '<div class="replace-chef-item'
+                    + (item.isAssignedOtherArea ? ' is-assigned-other-area' : '')
+                    + (item.isLocked ? ' is-locked' : '')
+                    + '" data-chef-name="' + escapeHtml(chef.name) + '">',
                     '<div class="replace-chef-item-info">',
                         '<span class="replace-chef-item-name">' + escapeHtml(chef.name) + '</span>',
                         rarityStars ? '<span class="replace-chef-item-stars">' + rarityStars + '</span>' : '',
@@ -9411,6 +9567,9 @@
 
         // 点击厨师项进行替换
         dialog.on('click', '.replace-chef-item', function() {
+            if ($(this).hasClass('is-locked')) {
+                return;
+            }
             var selectedChefName = $(this).data('chef-name');
             replaceChef(currentArea, currentChefName, selectedChefName);
             dialog.modal('hide');
@@ -9439,6 +9598,11 @@
 
         if (!areaResult) {
             alert('未找到区域结果');
+            return;
+        }
+
+        if (areaResult.isLocked) {
+            alert('该地区已锁定，不能替换厨师');
             return;
         }
 
@@ -9559,6 +9723,11 @@
             }
         });
 
+        if (sourceAreaResult && sourceAreaResult.isLocked && sourceAreaResult !== areaResult) {
+            alert('该厨师所在地区已锁定，不能替换');
+            return;
+        }
+
         // 替换当前区域厨师
         areaResult.chefs[chefIndex] = newChefResult;
 
@@ -9657,6 +9826,10 @@
             return result && result.areaName === areaName;
         });
         if (!areaResult) {
+            return;
+        }
+
+        if (areaResult.isLocked) {
             return;
         }
 
