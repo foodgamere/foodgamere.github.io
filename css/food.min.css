@@ -2812,6 +2812,27 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
 /* 响应式调整 */
 @media (max-width: 768px) {
+    #oneclick-settings-modal .modal-dialog {
+        margin: 10px;
+        max-height: calc(100vh - 20px);
+    }
+
+    #oneclick-settings-modal .modal-content {
+        max-height: calc(100vh - 20px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    #oneclick-settings-modal .modal-body {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: none;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+    }
+
     .calc-header-buttons {
         display: flex;
         margin-left: 0;
@@ -2826,14 +2847,10 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         min-width: calc(50% - 4px);
     }
 
-    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-useExistingConfig),
-    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-singleRecipePerRune) {
-        width: 100%;
-        float: none;
-    }
-
-    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-useExistingConfig) {
-        margin-bottom: 10px;
+    #oneclick-settings-modal .rune-section,
+    #oneclick-settings-modal .rune-list,
+    #oneclick-settings-modal .collapse {
+        max-width: 100%;
     }
 
     #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6 > .setting-card {
@@ -2879,10 +2896,6 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 }
 
 @media (max-width: 480px) {
-    #oneclick-settings-modal .modal-dialog {
-        margin: 10px;
-    }
-
     #oneclick-settings-modal .settings-row {
         margin-bottom: 10px;
     }

@@ -4479,7 +4479,7 @@ var OneClickQuery = (function($) {
         html += '<div class="row settings-row">';
         html += '<div class="col-xs-6">';
         html += '<div class="setting-card">';
-        html += '<label>使用场上已有配置</label>';
+        html += '<label>使用场上配置</label>';
         html += '<div class="switch-container">';
         html += '<input type="checkbox" id="setting-useExistingConfig"' + (settings.useExistingConfig ? ' checked' : '') + '>';
         html += '<label for="setting-useExistingConfig" class="switch-label"></label>';
@@ -4488,7 +4488,7 @@ var OneClickQuery = (function($) {
         html += '</div>';
         html += '<div class="col-xs-6">';
         html += '<div class="setting-card">';
-        html += '<label id="singleRecipePerRuneLabel">' + (settings.singleRecipePerRune ? '每种符文只查一个菜谱' : '每种符文平均分配') + '</label>';
+        html += '<label id="singleRecipePerRuneLabel">' + (settings.singleRecipePerRune ? '每种查一个菜谱' : '符文平均分配') + '</label>';
         html += '<div class="switch-container">';
         html += '<input type="checkbox" id="setting-singleRecipePerRune"' + (settings.singleRecipePerRune ? ' checked' : '') + '>';
         html += '<label for="setting-singleRecipePerRune" class="switch-label"></label>';
