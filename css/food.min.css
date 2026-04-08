@@ -2351,7 +2351,7 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 }
 
 #jade-material-detail-modal .modal-dialog {
-    width: 760px;
+    width: fit-content;
     max-width: calc(100vw - 30px);
 }
 
@@ -2368,8 +2368,21 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
 .jade-material-recipe-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fit, 280px);
+    width: fit-content;
+    max-width: 100%;
+    justify-content: center;
     gap: 12px;
+}
+
+@media (min-width: 769px) {
+    #jade-material-detail-modal .modal-dialog {
+        width: 914px;
+    }
+
+    .jade-material-recipe-grid {
+        grid-template-columns: repeat(3, 280px);
+    }
 }
 
 .jade-material-recipe-card {
@@ -2377,7 +2390,9 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     border-radius: 6px;
     padding: 12px 14px;
     background: #fff;
+    width: 280px;
     min-width: 0;
+    max-width: 100%;
 }
 
 .jade-material-recipe-title {
@@ -2405,6 +2420,17 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
 /* 响应式调整 */
 @media (max-width: 768px) {
+    #jade-material-detail-modal.in {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        padding: 10px;
+    }
+
+    #jade-material-detail-modal .modal-dialog {
+        margin: 0 auto;
+    }
+
     .calc-result-row.calc-material-row {
         display: inline-flex !important;
         width: auto !important;
