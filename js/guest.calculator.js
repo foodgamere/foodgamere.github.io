@@ -273,6 +273,9 @@ var GuestRateCalculator = (function($) {
                 if (!recipe || !recipe.data) {
                     continue;
                 }
+                if (Number(recipe.quantity) === 1) {
+                    continue;
+                }
 
                 var normalizedRank = normalizeRecipeRankValue(recipe.rankVal, recipe);
                 if (normalizedRank <= 0) {
@@ -296,6 +299,45 @@ var GuestRateCalculator = (function($) {
         }
 
         return String(averageRank);
+    }
+
+    var guestRateQualitySyncState = {
+        lastRecipeSignature: null
+    };
+
+    function buildGuestRecipeSignature(custom) {
+        if (!custom) {
+            return '';
+        }
+
+        var parts = [];
+
+        for (var c = 0; c < 3; c++) {
+            var slot = custom[c] || {};
+            var recipes = slot.recipes || [];
+            for (var r = 0; r < 3; r++) {
+                var recipe = recipes[r];
+                var recipeId = recipe && recipe.data && recipe.data.recipeId ? recipe.data.recipeId : '';
+                parts.push(String(recipeId));
+            }
+        }
+
+        return parts.join('|');
+    }
+
+    function syncQualityLevelByRecipeChanges(custom) {
+        var recipeSignature = buildGuestRecipeSignature(custom);
+        var hasRecipeChanged = guestRateQualitySyncState.lastRecipeSignature !== recipeSignature;
+
+        guestRateQualitySyncState.lastRecipeSignature = recipeSignature;
+        if (!hasRecipeChanged) {
+            return;
+        }
+
+        var averagedQualityLevel = getAverageQualityLevelFromCurrentCustom(custom);
+        if (averagedQualityLevel) {
+            setSelectpickerValueSilently("#quality-level", averagedQualityLevel);
+        }
     }
     
     function getActiveSelfUltimateEffects(chef, activeSelfUltimateMap) {
@@ -1998,10 +2040,7 @@ var GuestRateCalculator = (function($) {
         // 计算并更新贵客率计算器的所有字段
         if (calCustomRule.isGuestRate && calCustomRule.rules.length > 0) {
             var currentCustom = calCustomRule.rules[0].custom;
-            var averagedQualityLevel = getAverageQualityLevelFromCurrentCustom(currentCustom);
-            if (averagedQualityLevel) {
-                setSelectpickerValueSilently("#quality-level", averagedQualityLevel);
-            }
+            syncQualityLevelByRecipeChanges(currentCustom);
 
             // 获取星级、份数和品级
             var starLevel = parseInt($("#star-level").val()) || 5;

@@ -363,11 +363,60 @@ var OneClickQuery = (function($) {
      * @returns {number} 品级评分
      */
     function calculateQualityScore(rank) {
-        if (rank >= 4) return 400;      // 神级或传级
+        if (rank >= 5) return 500;      // 传级
+        else if (rank === 4) return 400; // 神级
         else if (rank === 3) return 300; // 特级
         else if (rank === 2) return 200;  // 优级
         else if (rank === 1) return 100;   // 可级
         else return -999999;              // 无法制作
+    }
+
+    function getCurrentRuneSelectionRankStats(enhancedChefs) {
+        var rankSum = 0;
+        var rankCount = 0;
+
+        if (!enhancedChefs || !enhancedChefs.length) {
+            return {
+                rankSum: 0,
+                rankCount: 0
+            };
+        }
+
+        for (var i = 0; i < enhancedChefs.length; i++) {
+            var assignedRecipes = enhancedChefs[i] && enhancedChefs[i].recipes ? enhancedChefs[i].recipes : [];
+            for (var j = 0; j < assignedRecipes.length; j++) {
+                var assignedRank = Number(assignedRecipes[j] && assignedRecipes[j].rank) || 0;
+                if (assignedRank <= 0) {
+                    continue;
+                }
+                rankSum += assignedRank;
+                rankCount++;
+            }
+        }
+
+        return {
+            rankSum: rankSum,
+            rankCount: rankCount
+        };
+    }
+
+    function countChefQualifiedRuneRecipes(enhancedChefs, chefIndex, requiredRank) {
+        if (!enhancedChefs || chefIndex === undefined || chefIndex === null || !requiredRank) {
+            return 0;
+        }
+
+        var chefData = enhancedChefs[chefIndex];
+        var assignedRecipes = chefData && chefData.recipes ? chefData.recipes : [];
+        var count = 0;
+
+        for (var i = 0; i < assignedRecipes.length; i++) {
+            var assignedRank = Number(assignedRecipes[i] && assignedRecipes[i].rank) || 0;
+            if (assignedRank >= requiredRank) {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     /**
@@ -375,16 +424,51 @@ var OneClickQuery = (function($) {
      * @param {Object} recipe - 菜谱对象
      * @param {number} rank - 品级
      * @param {number} guestCount - 贵客数量
+     * @param {Object} selectionContext - 当前分配上下文
      * @returns {number} 综合评分
      */
-    function calculateRecipeScore(recipe, rank, guestCount) {
+    function calculateRecipeScore(recipe, rank, guestCount, selectionContext) {
+        if (!rank || rank <= 0) {
+            return -999999999;
+        }
+
         var qualityScore = calculateQualityScore(rank);
-        // 时间评分：双贵客菜谱时间除以2
         var adjustedTime = (guestCount >= 2) ? Math.floor((recipe.time || 0) / 2) : (recipe.time || 0);
-        // 分配菜谱时优先看用时，其次再看品级
-        // 这样不会为了较高品级而强行选择明显更慢的菜
-        var timeScore = -adjustedTime * 1000;
-        return timeScore + qualityScore + guestCount;
+        var projectedAverageRank = rank;
+        var projectedQualityLevel = Math.max(1, Math.min(5, Math.floor(rank)));
+        var perRankQualifiedCount = 0;
+        var perRankImmediateGain = 0;
+
+        if (selectionContext && selectionContext.enhancedChefs) {
+            var rankStats = getCurrentRuneSelectionRankStats(selectionContext.enhancedChefs);
+            projectedAverageRank = (rankStats.rankSum + rank) / (rankStats.rankCount + 1);
+            projectedQualityLevel = Math.max(1, Math.min(5, Math.floor(projectedAverageRank)));
+
+            if (selectionContext.perRankRequirementMap &&
+                selectionContext.chefIndex !== undefined &&
+                selectionContext.chefIndex !== null) {
+                var requiredRank = selectionContext.perRankRequirementMap[selectionContext.chefIndex] || 0;
+                if (requiredRank > 0) {
+                    perRankQualifiedCount = countChefQualifiedRuneRecipes(
+                        selectionContext.enhancedChefs,
+                        selectionContext.chefIndex,
+                        requiredRank
+                    );
+                    if (rank >= requiredRank) {
+                        perRankImmediateGain = perRankQualifiedCount < 3 ? 1 : 0;
+                        perRankQualifiedCount += perRankImmediateGain;
+                    }
+                }
+            }
+        }
+
+        return projectedQualityLevel * 1000000000 +
+            projectedAverageRank * 10000000 +
+            qualityScore * 10000 +
+            perRankQualifiedCount * 1000 +
+            perRankImmediateGain * 500 +
+            guestCount * 10 -
+            adjustedTime / 100;
     }
 
     /**
@@ -396,6 +480,7 @@ var OneClickQuery = (function($) {
             return null;
         }
 
+        var perRankRequirementMap = buildPerRankChefRequirementMap(enhancedChefs || []);
         var bestRecipe = null;
         var bestScore = -999999;
         var bestChefIndex = -1;
@@ -430,7 +515,11 @@ var OneClickQuery = (function($) {
                     continue;
                 }
 
-                var totalScore = calculateRecipeScore(recipe, rank, guestCount);
+                var totalScore = calculateRecipeScore(recipe, rank, guestCount, {
+                    enhancedChefs: enhancedChefs,
+                    chefIndex: c,
+                    perRankRequirementMap: perRankRequirementMap
+                });
                 var shouldReplace = false;
 
                 if (totalScore > bestScore) {
@@ -1750,6 +1839,584 @@ var OneClickQuery = (function($) {
         return String(a.recipe && a.recipe.name || '').localeCompare(String(b.recipe && b.recipe.name || ''));
     }
 
+    function countRequiredRuneCoverage(selectedEntries, requiredRunes) {
+        var counts = {};
+        var i;
+
+        for (i = 0; i < requiredRunes.length; i++) {
+            counts[requiredRunes[i]] = 0;
+        }
+
+        for (i = 0; i < selectedEntries.length; i++) {
+            var assignedRune = selectedEntries[i] && selectedEntries[i].rune;
+            if (assignedRune && counts.hasOwnProperty(assignedRune)) {
+                counts[assignedRune]++;
+            }
+        }
+
+        return counts;
+    }
+
+    function buildUsedRecipeIdsFromCandidateEntries(selectedEntries, removeIndexMap) {
+        var usedRecipeIds = {};
+
+        for (var i = 0; i < selectedEntries.length; i++) {
+            if (removeIndexMap && removeIndexMap[i]) {
+                continue;
+            }
+            var recipeId = selectedEntries[i] && selectedEntries[i].candidate && selectedEntries[i].candidate.recipe && selectedEntries[i].candidate.recipe.recipeId;
+            if (recipeId) {
+                usedRecipeIds[recipeId] = true;
+            }
+        }
+
+        return usedRecipeIds;
+    }
+
+    function cloneCandidateEntry(entry) {
+        return {
+            candidate: entry.candidate,
+            rune: entry.rune || null,
+            initialAssignment: entry.initialAssignment || null
+        };
+    }
+
+    function buildReplacementEntry(candidate, assignedRune) {
+        return {
+            candidate: candidate,
+            rune: assignedRune || null,
+            initialAssignment: null
+        };
+    }
+
+    function replaceCandidateEntries(selectedEntries, removeIndices, replacementEntries) {
+        var removeIndexMap = {};
+        var nextEntries = [];
+        var i;
+
+        for (i = 0; i < removeIndices.length; i++) {
+            removeIndexMap[removeIndices[i]] = true;
+        }
+
+        for (i = 0; i < selectedEntries.length; i++) {
+            if (removeIndexMap[i]) {
+                continue;
+            }
+            nextEntries.push(cloneCandidateEntry(selectedEntries[i]));
+        }
+
+        for (i = 0; i < replacementEntries.length; i++) {
+            nextEntries.push(cloneCandidateEntry(replacementEntries[i]));
+        }
+
+        return nextEntries;
+    }
+
+    function assignRequiredRunesToReplacementCandidates(missingRunes, replacementCandidates) {
+        var assignments = [];
+
+        if (!missingRunes || !missingRunes.length) {
+            for (var i = 0; i < replacementCandidates.length; i++) {
+                assignments.push(buildReplacementEntry(replacementCandidates[i], null));
+            }
+            return assignments;
+        }
+
+        if (missingRunes.length === 1) {
+            var targetRune = missingRunes[0];
+            for (var j = 0; j < replacementCandidates.length; j++) {
+                if ((replacementCandidates[j].runeOptions || []).indexOf(targetRune) >= 0) {
+                    for (var k = 0; k < replacementCandidates.length; k++) {
+                        assignments.push(buildReplacementEntry(replacementCandidates[k], k === j ? targetRune : null));
+                    }
+                    return assignments;
+                }
+            }
+            return null;
+        }
+
+        if (missingRunes.length === 2 && replacementCandidates.length === 2) {
+            var firstCandidateRunes = replacementCandidates[0].runeOptions || [];
+            var secondCandidateRunes = replacementCandidates[1].runeOptions || [];
+            if (firstCandidateRunes.indexOf(missingRunes[0]) >= 0 && secondCandidateRunes.indexOf(missingRunes[1]) >= 0) {
+                return [
+                    buildReplacementEntry(replacementCandidates[0], missingRunes[0]),
+                    buildReplacementEntry(replacementCandidates[1], missingRunes[1])
+                ];
+            }
+            if (firstCandidateRunes.indexOf(missingRunes[1]) >= 0 && secondCandidateRunes.indexOf(missingRunes[0]) >= 0) {
+                return [
+                    buildReplacementEntry(replacementCandidates[0], missingRunes[1]),
+                    buildReplacementEntry(replacementCandidates[1], missingRunes[0])
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    function isBetterTimeReplacementOption(currentBest, nextOption) {
+        if (!nextOption) {
+            return false;
+        }
+        if (!currentBest) {
+            return true;
+        }
+        if (nextOption.reachesTarget !== currentBest.reachesTarget) {
+            return nextOption.reachesTarget;
+        }
+        if (nextOption.totalEfficiencyLoss !== currentBest.totalEfficiencyLoss) {
+            return nextOption.totalEfficiencyLoss < currentBest.totalEfficiencyLoss;
+        }
+        if (nextOption.totalTimeGain !== currentBest.totalTimeGain) {
+            return nextOption.totalTimeGain > currentBest.totalTimeGain;
+        }
+        return nextOption.totalReplacementEfficiency > currentBest.totalReplacementEfficiency;
+    }
+
+    function getMissingRunesAfterRemoval(selectedEntries, requiredRunes, removeIndices) {
+        var removeIndexMap = {};
+        var counts = countRequiredRuneCoverage(selectedEntries, requiredRunes);
+        var missingRunes = [];
+        var i;
+
+        for (i = 0; i < removeIndices.length; i++) {
+            removeIndexMap[removeIndices[i]] = true;
+        }
+
+        for (i = 0; i < selectedEntries.length; i++) {
+            if (!removeIndexMap[i]) {
+                continue;
+            }
+            var assignedRune = selectedEntries[i] && selectedEntries[i].rune;
+            if (assignedRune && counts.hasOwnProperty(assignedRune)) {
+                counts[assignedRune]--;
+            }
+        }
+
+        for (i = 0; i < requiredRunes.length; i++) {
+            var rune = requiredRunes[i];
+            if ((counts[rune] || 0) <= 0) {
+                missingRunes.push(rune);
+            }
+        }
+
+        return missingRunes;
+    }
+
+    function findSingleTimeReplacementOption(selectedEntries, allCandidates, requiredRunes, timeLimitSeconds, currentTimeSum, efficiencyGetter, assignmentSolver) {
+        var indexedEntries = [];
+        var i;
+
+        for (i = 0; i < selectedEntries.length; i++) {
+            indexedEntries.push({
+                index: i,
+                entry: selectedEntries[i]
+            });
+        }
+
+        indexedEntries.sort(function(a, b) {
+            return efficiencyGetter(a.entry.candidate) - efficiencyGetter(b.entry.candidate);
+        });
+
+        for (i = 0; i < indexedEntries.length; i++) {
+            var removeIndex = indexedEntries[i].index;
+            var removedEntry = indexedEntries[i].entry;
+            var removeIndices = [removeIndex];
+            var missingRunes = getMissingRunesAfterRemoval(selectedEntries, requiredRunes, removeIndices);
+            if (missingRunes.length > 1) {
+                continue;
+            }
+
+            var removeIndexMap = {};
+            removeIndexMap[removeIndex] = true;
+            var usedRecipeIds = buildUsedRecipeIdsFromCandidateEntries(selectedEntries, removeIndexMap);
+            var removedEfficiency = efficiencyGetter(removedEntry.candidate);
+            var bestOption = null;
+
+            for (var c = 0; c < allCandidates.length; c++) {
+                var candidate = allCandidates[c];
+                var recipeId = candidate && candidate.recipe && candidate.recipe.recipeId;
+                if (!recipeId || usedRecipeIds[recipeId]) {
+                    continue;
+                }
+                if ((candidate.cookingTime || 0) <= (removedEntry.candidate.cookingTime || 0)) {
+                    continue;
+                }
+
+                var replacementEntries = assignRequiredRunesToReplacementCandidates(missingRunes, [candidate]);
+                if (!replacementEntries) {
+                    continue;
+                }
+
+                var tempEntries = replaceCandidateEntries(selectedEntries, removeIndices, replacementEntries);
+                var tempAssignments = assignmentSolver(tempEntries);
+                if (!tempAssignments) {
+                    continue;
+                }
+
+                var replacementEfficiency = efficiencyGetter(candidate);
+                var option = {
+                    entries: tempEntries,
+                    assignments: tempAssignments,
+                    totalTimeGain: (candidate.cookingTime || 0) - (removedEntry.candidate.cookingTime || 0),
+                    totalEfficiencyLoss: removedEfficiency - replacementEfficiency,
+                    totalReplacementEfficiency: replacementEfficiency
+                };
+                option.reachesTarget = currentTimeSum + option.totalTimeGain >= timeLimitSeconds;
+
+                if (isBetterTimeReplacementOption(bestOption, option)) {
+                    bestOption = option;
+                }
+            }
+
+            if (bestOption) {
+                return bestOption;
+            }
+        }
+
+        return null;
+    }
+
+    function findPairTimeReplacementOption(selectedEntries, allCandidates, requiredRunes, timeLimitSeconds, currentTimeSum, efficiencyGetter, assignmentSolver) {
+        var indexedEntries = [];
+        var i;
+        var j;
+
+        for (i = 0; i < selectedEntries.length; i++) {
+            indexedEntries.push({
+                index: i,
+                entry: selectedEntries[i]
+            });
+        }
+
+        indexedEntries.sort(function(a, b) {
+            return efficiencyGetter(a.entry.candidate) - efficiencyGetter(b.entry.candidate);
+        });
+
+        for (i = 0; i < indexedEntries.length; i++) {
+            for (j = i + 1; j < indexedEntries.length; j++) {
+                var firstRemoved = indexedEntries[i];
+                var secondRemoved = indexedEntries[j];
+                var removeIndices = [firstRemoved.index, secondRemoved.index];
+                var missingRunes = getMissingRunesAfterRemoval(selectedEntries, requiredRunes, removeIndices);
+                if (missingRunes.length > 2) {
+                    continue;
+                }
+
+                var removeIndexMap = {};
+                removeIndexMap[firstRemoved.index] = true;
+                removeIndexMap[secondRemoved.index] = true;
+                var usedRecipeIds = buildUsedRecipeIdsFromCandidateEntries(selectedEntries, removeIndexMap);
+                var removedTimeSum = (firstRemoved.entry.candidate.cookingTime || 0) + (secondRemoved.entry.candidate.cookingTime || 0);
+                var removedEfficiencySum = efficiencyGetter(firstRemoved.entry.candidate) + efficiencyGetter(secondRemoved.entry.candidate);
+                var bestOption = null;
+
+                for (var c1 = 0; c1 < allCandidates.length; c1++) {
+                    var candidateA = allCandidates[c1];
+                    var candidateAId = candidateA && candidateA.recipe && candidateA.recipe.recipeId;
+                    if (!candidateAId || usedRecipeIds[candidateAId]) {
+                        continue;
+                    }
+
+                    for (var c2 = c1 + 1; c2 < allCandidates.length; c2++) {
+                        var candidateB = allCandidates[c2];
+                        var candidateBId = candidateB && candidateB.recipe && candidateB.recipe.recipeId;
+                        if (!candidateBId || usedRecipeIds[candidateBId]) {
+                            continue;
+                        }
+
+                        var replacementEntries = assignRequiredRunesToReplacementCandidates(missingRunes, [candidateA, candidateB]);
+                        if (!replacementEntries) {
+                            continue;
+                        }
+
+                        var replacementTimeSum = (candidateA.cookingTime || 0) + (candidateB.cookingTime || 0);
+                        if (replacementTimeSum <= removedTimeSum) {
+                            continue;
+                        }
+
+                        var tempEntries = replaceCandidateEntries(selectedEntries, removeIndices, replacementEntries);
+                        var tempAssignments = assignmentSolver(tempEntries);
+                        if (!tempAssignments) {
+                            continue;
+                        }
+
+                        var replacementEfficiency = efficiencyGetter(candidateA) + efficiencyGetter(candidateB);
+                        var option = {
+                            entries: tempEntries,
+                            assignments: tempAssignments,
+                            totalTimeGain: replacementTimeSum - removedTimeSum,
+                            totalEfficiencyLoss: removedEfficiencySum - replacementEfficiency,
+                            totalReplacementEfficiency: replacementEfficiency
+                        };
+                        option.reachesTarget = currentTimeSum + option.totalTimeGain >= timeLimitSeconds;
+
+                        if (isBetterTimeReplacementOption(bestOption, option)) {
+                            bestOption = option;
+                        }
+                    }
+                }
+
+                if (bestOption) {
+                    return bestOption;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    function adjustCandidateEntriesForTimeLimit(selectedEntries, allCandidates, requiredRunes, timeLimitSeconds, efficiencyGetter, assignmentSolver) {
+        var currentEntries = selectedEntries.slice();
+        var currentTimeSum = 0;
+
+        for (var i = 0; i < currentEntries.length; i++) {
+            currentTimeSum += currentEntries[i].candidate.cookingTime || 0;
+        }
+
+        while (currentEntries.length >= 9 && currentTimeSum < timeLimitSeconds) {
+            var singleOption = findSingleTimeReplacementOption(
+                currentEntries,
+                allCandidates,
+                requiredRunes,
+                timeLimitSeconds,
+                currentTimeSum,
+                efficiencyGetter,
+                assignmentSolver
+            );
+            if (singleOption) {
+                currentEntries = singleOption.entries;
+                currentTimeSum += singleOption.totalTimeGain;
+                continue;
+            }
+
+            var pairOption = findPairTimeReplacementOption(
+                currentEntries,
+                allCandidates,
+                requiredRunes,
+                timeLimitSeconds,
+                currentTimeSum,
+                efficiencyGetter,
+                assignmentSolver
+            );
+            if (!pairOption) {
+                break;
+            }
+
+            currentEntries = pairOption.entries;
+            currentTimeSum += pairOption.totalTimeGain;
+        }
+
+        return currentEntries;
+    }
+
+    function getRunePreparedCandidateEfficiency(candidate) {
+        if (!candidate) {
+            return -999999;
+        }
+        return candidate.selectionScore || -999999;
+    }
+
+    function compareRunePreparedCandidatePriority(a, b) {
+        var scoreDiff = getRunePreparedCandidateEfficiency(b) - getRunePreparedCandidateEfficiency(a);
+        if (scoreDiff !== 0) {
+            return scoreDiff;
+        }
+
+        var rankDiff = (b.bestRank || 0) - (a.bestRank || 0);
+        if (rankDiff !== 0) {
+            return rankDiff;
+        }
+
+        var timeDiff = (a.cookingTime || 0) - (b.cookingTime || 0);
+        if (timeDiff !== 0) {
+            return timeDiff;
+        }
+
+        return String(a.recipe && a.recipe.name || '').localeCompare(String(b.recipe && b.recipe.name || ''));
+    }
+
+    function buildRunePreparedCandidates(recipesByRune, recipeToRunesMap, enhancedChefs, totalGuestRate, totalTimeBonus, gameData) {
+        var candidateMap = {};
+        var candidates = [];
+
+        for (var rune in recipesByRune) {
+            if (!recipesByRune.hasOwnProperty(rune)) {
+                continue;
+            }
+
+            var runeRecipes = recipesByRune[rune] || [];
+            for (var i = 0; i < runeRecipes.length; i++) {
+                var recipe = runeRecipes[i];
+                if (!recipe || !recipe.recipeId) {
+                    continue;
+                }
+
+                var candidate = candidateMap[recipe.recipeId];
+                if (!candidate) {
+                    var eligibleAssignments = [];
+                    var guestCount = getRecipeGuestCount(recipe, gameData);
+                    var quantityResult = calculateRecipeQuantity(recipe, totalGuestRate, false);
+                    var quantityForTime = quantityResult.canAchieveBilai ? quantityResult.quantity : quantityResult.maxQuantity;
+                    var cookingTime = calculateCookingTime(recipe.time || 0, quantityForTime, totalTimeBonus);
+                    var bestRank = 0;
+
+                    for (var c = 0; c < enhancedChefs.length; c++) {
+                        var enhancedChef = enhancedChefs[c].enhanced;
+                        var rank = getRecipeRank(enhancedChef, recipe);
+                        if (rank === 0) {
+                            continue;
+                        }
+                        if (hasDivineRecipeSkill(enhancedChef) && rank < 4) {
+                            continue;
+                        }
+                        eligibleAssignments.push({
+                            chefIndex: c,
+                            rank: rank
+                        });
+                        if (rank > bestRank) {
+                            bestRank = rank;
+                        }
+                    }
+
+                    eligibleAssignments.sort(function(a, b) {
+                        if (a.rank !== b.rank) {
+                            return b.rank - a.rank;
+                        }
+                        return a.chefIndex - b.chefIndex;
+                    });
+
+                    candidate = {
+                        recipe: recipe,
+                        runeOptions: (recipeToRunesMap[recipe.name] || []).slice(),
+                        eligibleAssignments: eligibleAssignments,
+                        quantity: quantityResult.quantity,
+                        quantityForTime: quantityForTime,
+                        canAchieveBilai: quantityResult.canAchieveBilai,
+                        requiredPortions: quantityResult.requiredPortions,
+                        maxQuantity: quantityResult.maxQuantity,
+                        cookingTime: cookingTime,
+                        guestCount: guestCount,
+                        bestRank: bestRank,
+                        selectionScore: calculateRecipeScore(recipe, bestRank, guestCount)
+                    };
+                    candidateMap[recipe.recipeId] = candidate;
+                    candidates.push(candidate);
+                }
+
+                if (candidate.runeOptions.indexOf(rune) < 0) {
+                    candidate.runeOptions.push(rune);
+                }
+            }
+        }
+
+        candidates.sort(compareRunePreparedCandidatePriority);
+
+        return {
+            candidateMap: candidateMap,
+            candidates: candidates
+        };
+    }
+
+    function optimizeFixedRuneAssignments(selectedEntries) {
+        if (!selectedEntries || !selectedEntries.length) {
+            return [];
+        }
+
+        var orderedEntries = selectedEntries.map(function(entry, index) {
+            return {
+                entry: entry,
+                originalIndex: index
+            };
+        });
+
+        orderedEntries.sort(function(a, b) {
+            var assignmentCountDiff = (a.entry.candidate.eligibleAssignments.length || 0) - (b.entry.candidate.eligibleAssignments.length || 0);
+            if (assignmentCountDiff !== 0) {
+                return assignmentCountDiff;
+            }
+            return compareRunePreparedCandidatePriority(a.entry.candidate, b.entry.candidate);
+        });
+
+        var memo = {};
+
+        function dfs(position, loadCode) {
+            if (position >= orderedEntries.length) {
+                return {
+                    rankSum: 0,
+                    scoreSum: 0,
+                    next: null
+                };
+            }
+
+            var memoKey = position + ':' + loadCode;
+            if (memo.hasOwnProperty(memoKey)) {
+                return memo[memoKey];
+            }
+
+            var loads = decodeChefLoadCode(loadCode);
+            var candidate = orderedEntries[position].entry.candidate;
+            var best = null;
+
+            for (var i = 0; i < candidate.eligibleAssignments.length; i++) {
+                var assignment = candidate.eligibleAssignments[i];
+                if (loads[assignment.chefIndex] >= 3) {
+                    continue;
+                }
+
+                var nextLoads = loads.slice();
+                nextLoads[assignment.chefIndex]++;
+                var nextLoadCode = encodeChefLoadCode(nextLoads[0], nextLoads[1], nextLoads[2]);
+                var nextResult = dfs(position + 1, nextLoadCode);
+                if (!nextResult) {
+                    continue;
+                }
+
+                var rankSum = assignment.rank + nextResult.rankSum;
+                var scoreSum = getRunePreparedCandidateEfficiency(candidate) + nextResult.scoreSum;
+                if (!best ||
+                    rankSum > best.rankSum ||
+                    (rankSum === best.rankSum && scoreSum > best.scoreSum) ||
+                    (rankSum === best.rankSum && scoreSum === best.scoreSum && assignment.chefIndex < best.assignment.chefIndex)) {
+                    best = {
+                        rankSum: rankSum,
+                        scoreSum: scoreSum,
+                        assignment: assignment,
+                        nextLoadCode: nextLoadCode,
+                        next: nextResult
+                    };
+                }
+            }
+
+            memo[memoKey] = best;
+            return best;
+        }
+
+        var solved = dfs(0, encodeChefLoadCode(0, 0, 0));
+        if (!solved) {
+            return null;
+        }
+
+        var results = new Array(selectedEntries.length);
+        var currentLoadCode = encodeChefLoadCode(0, 0, 0);
+
+        for (var pos = 0; pos < orderedEntries.length; pos++) {
+            var current = memo[pos + ':' + currentLoadCode];
+            if (!current || !current.assignment) {
+                return null;
+            }
+
+            results[orderedEntries[pos].originalIndex] = {
+                chefIndex: current.assignment.chefIndex,
+                rank: current.assignment.rank
+            };
+            currentLoadCode = current.nextLoadCode;
+        }
+
+        return results;
+    }
+
     function getBestAvailableChefAssignment(candidate, chefLoads) {
         if (!candidate || !candidate.eligibleAssignments) {
             return null;
@@ -2438,8 +3105,16 @@ var OneClickQuery = (function($) {
 
         var prepared = prepareJadeCandidates(candidates, requiredRunes, totalGuestRate, totalTimeBonus);
         var preparedCandidates = prepared.preparedCandidates || [];
+        var preparedCandidateByRecipeId = {};
         if (!preparedCandidates.length) {
             return null;
+        }
+
+        for (var pc = 0; pc < preparedCandidates.length; pc++) {
+            var preparedRecipeId = preparedCandidates[pc] && preparedCandidates[pc].recipe && preparedCandidates[pc].recipe.recipeId;
+            if (preparedRecipeId) {
+                preparedCandidateByRecipeId[preparedRecipeId] = preparedCandidates[pc];
+            }
         }
 
         var runeBuckets = buildJadeRuneCandidateBuckets(preparedCandidates, requiredRunes);
@@ -2451,6 +3126,7 @@ var OneClickQuery = (function($) {
         var totalValueSum = 0;
         var maxSelections = 9;
         var singleRecipePerRune = settings.singleRecipePerRune === true;
+        var hasTimeLimit = timeLimitSeconds > 0;
         var selectedEntries = [];
         var perRankChefRequirementMap = buildPerRankChefRequirementMap(enhancedChefs || []);
         var i;
@@ -2487,7 +3163,7 @@ var OneClickQuery = (function($) {
         }
 
         // 第二轮起：在“当前菜谱数量最少”的符文中，选效率最高的下一道菜
-        while (!singleRecipePerRune && totalTimeSum < timeLimitSeconds && selectedEntries.length < maxSelections) {
+        while (!singleRecipePerRune && selectedEntries.length < maxSelections && (!hasTimeLimit || totalTimeSum < timeLimitSeconds)) {
             var availableCounts = [];
             for (i = 0; i < requiredRunes.length; i++) {
                 var currentRune = requiredRunes[i];
@@ -2590,7 +3266,7 @@ var OneClickQuery = (function($) {
 
         // 第一段补充：优先给 PerRank 厨师补 conditionValue 达标的符文菜谱
         if (!singleRecipePerRune && hasPerRankChefs) {
-            while (usageState.totalTimeSum < timeLimitSeconds && selections.length < maxSelections) {
+            while (selections.length < maxSelections && hasTimeLimit && usageState.totalTimeSum < timeLimitSeconds) {
                 var bestPerRankRunePick = null;
                 var bestPerRankRuneKey = null;
 
@@ -2635,7 +3311,7 @@ var OneClickQuery = (function($) {
             }
         }
 
-        if (!singleRecipePerRune && hasPerRankChefs && usageState.totalTimeSum >= timeLimitSeconds) {
+        if (!singleRecipePerRune && hasPerRankChefs && hasTimeLimit && usageState.totalTimeSum >= timeLimitSeconds) {
             selections = rebalancePerRankSelectionsToOtherChefs(
                 selections,
                 enhancedChefs || [],
@@ -2658,7 +3334,7 @@ var OneClickQuery = (function($) {
         }
 
         // 第三段补充：如果时间还没达标，再按日均玉璧效率给全队补符文菜谱
-        while (!singleRecipePerRune && usageState.totalTimeSum < timeLimitSeconds && selections.length < maxSelections) {
+        while (!singleRecipePerRune && selections.length < maxSelections && (!hasTimeLimit || usageState.totalTimeSum < timeLimitSeconds)) {
             var bestGeneralRunePick = pickBestPreparedCandidateGlobal(
                 preparedCandidates,
                 usageState.usedRecipeIds,
@@ -2670,6 +3346,63 @@ var OneClickQuery = (function($) {
             }
 
             supplementSelectionsWithPreparedCandidate(selections, bestGeneralRunePick, null, usageState);
+        }
+
+        if (!settings.queryMode && timeLimitSeconds > 0 && selections.length >= maxSelections && usageState.totalTimeSum < timeLimitSeconds) {
+            var jadeSelectedEntries = [];
+            for (i = 0; i < selections.length; i++) {
+                var selectionRecipeId = selections[i] && selections[i].recipe && selections[i].recipe.recipeId;
+                var matchedPreparedCandidate = selectionRecipeId ? preparedCandidateByRecipeId[selectionRecipeId] : null;
+                if (!matchedPreparedCandidate) {
+                    continue;
+                }
+                jadeSelectedEntries.push({
+                    candidate: matchedPreparedCandidate,
+                    rune: selections[i].rune || null,
+                    initialAssignment: {
+                        chefIndex: selections[i].chefIndex,
+                        rank: selections[i].rank
+                    }
+                });
+            }
+
+            if (jadeSelectedEntries.length >= maxSelections) {
+                jadeSelectedEntries = adjustCandidateEntriesForTimeLimit(
+                    jadeSelectedEntries,
+                    preparedCandidates,
+                    requiredRunes,
+                    timeLimitSeconds,
+                    getJadeCandidateEfficiency,
+                    function(entries) {
+                        return optimizeFixedJadeAssignments(entries, perRankChefRequirementMap);
+                    }
+                );
+
+                var adjustedAssignments = optimizeFixedJadeAssignments(jadeSelectedEntries, perRankChefRequirementMap);
+                if (adjustedAssignments) {
+                    selections = [];
+                    for (i = 0; i < jadeSelectedEntries.length; i++) {
+                        var jadeEntry = jadeSelectedEntries[i];
+                        var jadeAssignment = adjustedAssignments[i];
+                        selections.push({
+                            recipe: jadeEntry.candidate.recipe,
+                            chefIndex: jadeAssignment.chefIndex,
+                            rank: jadeAssignment.rank,
+                            rune: jadeEntry.rune || null,
+                            quantity: jadeEntry.candidate.quantity,
+                            quantityForTime: jadeEntry.candidate.quantityForTime,
+                            cookingTime: jadeEntry.candidate.cookingTime,
+                            canAchieveBilai: jadeEntry.candidate.canAchieveBilai,
+                            requiredPortions: jadeEntry.candidate.requiredPortions,
+                            maxQuantity: jadeEntry.candidate.maxQuantity,
+                            jadeValue: jadeEntry.candidate.jadeValue,
+                            runeOptions: jadeEntry.candidate.runeOptions.slice(),
+                            isFullPoolSupplement: false
+                        });
+                    }
+                    usageState = rebuildJadeSelectionUsage(selections);
+                }
+            }
         }
 
         totalTimeSum = usageState.totalTimeSum;
@@ -2705,17 +3438,21 @@ var OneClickQuery = (function($) {
         return actualGuestRate * critRate * scatterRate / timePercentage;
     }
 
-    function getAverageQualityLevelFromSelections(selections) {
+    function getAverageQualityLevelFromSelections(selections, options) {
         if (!selections || !selections.length) {
             return "1";
         }
 
+        options = options || {};
         var rankSum = 0;
         var rankCount = 0;
 
         for (var i = 0; i < selections.length; i++) {
             var selection = selections[i];
             if (!selection || selection.isFullPoolSupplement) {
+                continue;
+            }
+            if (options.excludeSingleQuantity && Number(selection.quantity) === 1) {
                 continue;
             }
 
@@ -2758,6 +3495,31 @@ var OneClickQuery = (function($) {
     // ========================================
     // 一键查询主函数
     // ========================================
+
+    function clearCurrentFieldConfig(refreshUI) {
+        if (typeof setCustomChef !== 'function' || typeof setCustomRecipe !== 'function') {
+            return false;
+        }
+
+        var cleared = false;
+
+        for (var position = 0; position < 3; position++) {
+            setCustomChef(0, position, null);
+            if (typeof setCustomEquip === 'function') {
+                setCustomEquip(0, position, null);
+            }
+            for (var recipeIndex = 0; recipeIndex < 3; recipeIndex++) {
+                setCustomRecipe(0, position, recipeIndex, null);
+            }
+            cleared = true;
+        }
+
+        if (refreshUI && cleared && typeof calCustomResults === 'function' && typeof calCustomRule !== 'undefined' && calCustomRule && calCustomRule.gameData) {
+            calCustomResults(calCustomRule.gameData);
+        }
+
+        return cleared;
+    }
     
     /**
      * 执行一键查询
@@ -2805,6 +3567,10 @@ var OneClickQuery = (function($) {
             
             loadSettings();
             var isJadeMode = isJadeQueryMode();
+
+            if (!settings.useExistingConfig) {
+                clearCurrentFieldConfig(true);
+            }
             
             // ========================================
             // 检查场上是否已有厨师配置
@@ -3831,7 +4597,9 @@ var OneClickQuery = (function($) {
                 result.totalTimeBonus = totalTimeBonus;
                 result.totalCookingTime = finalJadeOptimization.totalCookingTime;
                 result.timeReached = finalJadeOptimization.totalCookingTime >= settings.defaultTime * 3600;
-                result.qualityLevel = getAverageQualityLevelFromSelections(finalJadeOptimization.selections);
+                result.qualityLevel = getAverageQualityLevelFromSelections(finalJadeOptimization.selections, {
+                    excludeSingleQuantity: true
+                });
                 result.dailyJade = finalJadeOptimization.dailyJade;
                 result.recipeJadeValueTotal = finalJadeOptimization.recipeJadeValueTotal;
 
@@ -4106,6 +4874,15 @@ var OneClickQuery = (function($) {
                 result.cannotMakeInfo = cannotMakeInfo;
                 result.cannotMakeCount = cannotMakeCount;
             }
+
+            var runePreparedData = buildRunePreparedCandidates(
+                recipesByRune,
+                recipeToRunesMap,
+                enhancedChefs,
+                totalGuestRate,
+                totalTimeBonus,
+                gameData
+            );
             
             // ========================================
             // 按轮次分配菜谱（与show项目一致）
@@ -4117,6 +4894,12 @@ var OneClickQuery = (function($) {
             var maxRounds = 100;
             var continueAllocation = true;
             var singleRecipePerRune = settings.singleRecipePerRune === true;
+            var hasTimeLimit = timeLimitSeconds > 0;
+            var assignedRuneCounts = {};
+
+            for (var sr = 0; sr < selectedRunes.length; sr++) {
+                assignedRuneCounts[selectedRunes[sr]] = 0;
+            }
             
             
             while (continueAllocation && round < maxRounds) {
@@ -4160,6 +4943,7 @@ var OneClickQuery = (function($) {
                     });
                     usedRecipeIds[bestRoundItem.recipe.recipeId] = true;
                     assignedRunes[bestRoundItem.rune] = true;
+                    assignedRuneCounts[bestRoundItem.rune] = (assignedRuneCounts[bestRoundItem.rune] || 0) + 1;
 
                     if (bestRoundItem.bestRank >= 4) totalGodCount++;
 
@@ -4175,7 +4959,15 @@ var OneClickQuery = (function($) {
                     assignedThisRound = true;
 
                     // 检查时间是否达标
-                    if (totalCookingTime >= timeLimitSeconds) {
+                    var allSelectedRunesCovered = true;
+                    for (var coverageIndex = 0; coverageIndex < selectedRunes.length; coverageIndex++) {
+                        if ((assignedRuneCounts[selectedRunes[coverageIndex]] || 0) <= 0) {
+                            allSelectedRunesCovered = false;
+                            break;
+                        }
+                    }
+
+                    if (hasTimeLimit && allSelectedRunesCovered && totalCookingTime >= timeLimitSeconds) {
                         continueAllocation = false;
                         break;
                     }
@@ -4203,6 +4995,55 @@ var OneClickQuery = (function($) {
                 }
             }
 
+            if (!isQueryEfficiencyMode && timeLimitSeconds > 0 && totalCookingTime < timeLimitSeconds) {
+                var runeSelectedEntries = [];
+                for (var rc = 0; rc < enhancedChefs.length; rc++) {
+                    for (var rr = 0; rr < enhancedChefs[rc].recipes.length; rr++) {
+                        var selectedRuneRecipe = enhancedChefs[rc].recipes[rr];
+                        var selectedRuneRecipeId = selectedRuneRecipe && selectedRuneRecipe.recipe && selectedRuneRecipe.recipe.recipeId;
+                        var matchedRuneCandidate = selectedRuneRecipeId ? runePreparedData.candidateMap[selectedRuneRecipeId] : null;
+                        if (!matchedRuneCandidate) {
+                            continue;
+                        }
+                        runeSelectedEntries.push({
+                            candidate: matchedRuneCandidate,
+                            rune: selectedRuneRecipe.rune || null,
+                            initialAssignment: {
+                                chefIndex: rc,
+                                rank: selectedRuneRecipe.rank
+                            }
+                        });
+                    }
+                }
+
+                if (runeSelectedEntries.length >= 9) {
+                    runeSelectedEntries = adjustCandidateEntriesForTimeLimit(
+                        runeSelectedEntries,
+                        runePreparedData.candidates,
+                        selectedRunes,
+                        timeLimitSeconds,
+                        getRunePreparedCandidateEfficiency,
+                        optimizeFixedRuneAssignments
+                    );
+
+                    var adjustedRuneAssignments = optimizeFixedRuneAssignments(runeSelectedEntries);
+                    if (adjustedRuneAssignments) {
+                        for (var clearChefIndex = 0; clearChefIndex < enhancedChefs.length; clearChefIndex++) {
+                            enhancedChefs[clearChefIndex].recipes = [];
+                        }
+                        for (var ra = 0; ra < runeSelectedEntries.length; ra++) {
+                            var runeEntry = runeSelectedEntries[ra];
+                            var runeAssignment = adjustedRuneAssignments[ra];
+                            enhancedChefs[runeAssignment.chefIndex].recipes.push({
+                                recipe: runeEntry.candidate.recipe,
+                                rank: runeAssignment.rank,
+                                rune: runeEntry.rune
+                            });
+                        }
+                    }
+                }
+            }
+
             supplementPerRankChefRecipesInPlace(
                 enhancedChefs,
                 recipes,
@@ -4213,6 +5054,7 @@ var OneClickQuery = (function($) {
             // 构建结果（重新计算份数和制作时间）
             var positions = [];
             var totalRecipes = 0;
+            totalGodCount = 0;
             totalCookingTime = 0; // 重新计算
             var runeFinalSelections = [];
             
@@ -4340,7 +5182,9 @@ var OneClickQuery = (function($) {
             result.totalTimeBonus = totalTimeBonus;
             result.totalCookingTime = totalCookingTime;
             result.timeReached = timeReached;
-            result.qualityLevel = getAverageQualityLevelFromSelections(runeFinalSelections);
+            result.qualityLevel = getAverageQualityLevelFromSelections(runeFinalSelections, {
+                excludeSingleQuantity: true
+            });
             
             // 记录无法达到必来的星级列表
             var cannotAchieveStarList = Object.keys(cannotAchieveStarLevels).map(Number).sort();
@@ -4986,7 +5830,8 @@ var OneClickQuery = (function($) {
                 $(this).val(val.substring(0, val.indexOf('.') + 2));
             }
         }).on('change', function() {
-            var value = parseFloat($(this).val()) || 7.0;
+            var value = parseFloat($(this).val());
+            if (isNaN(value)) value = settings.defaultTime;
             if (value < 0) value = 0;
             if (value > 24) value = 24;
             $(this).val(value);
