@@ -2832,6 +2832,10 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         width: 100%;
         float: none;
     }
+
+    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-useExistingConfig) {
+        margin-bottom: 10px;
+    }
 }
 
 @media (max-width: 480px) {
@@ -2849,11 +2853,6 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         float: left;
         padding-left: 5px;
         padding-right: 5px;
-    }
-
-    #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:first-child {
-        width: 100%;
-        float: none;
     }
 
     #oneclick-settings-modal .settings-row > .col-xs-12 {
@@ -2886,18 +2885,30 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
         min-width: 0;
     }
 
+    #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:first-child {
+        width: 58%;
+    }
+
+    #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:last-child {
+        width: 42%;
+    }
+
     #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:first-child .setting-card {
         justify-content: flex-start;
-        gap: 10px;
+        gap: 8px;
     }
 
     #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:first-child .setting-card .input-group {
-        flex: 1 1 auto;
-        min-width: 0;
+        flex: 0 1 auto;
+        min-width: 126px;
     }
 
     #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:first-child .setting-card .form-control {
         min-width: 0;
+    }
+
+    #oneclick-settings-modal .settings-row:first-of-type > .col-xs-6:last-child .setting-card {
+        justify-content: space-between;
     }
 
     #oneclick-settings-modal .setting-card .switch-container {
