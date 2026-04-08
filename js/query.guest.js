@@ -1036,30 +1036,36 @@ var OneClickQuery = (function($) {
     }
 
     /**
-     * 生成厨师组合（3个厨师一组）
+     * 生成厨师组合（最多3个厨师一组）
      * @param {Array} chefs - 厨师列表
-     * @returns {Array} 所有可能的3厨师组合列表
+     * @returns {Array} 所有可能的1~3厨师组合列表
      */
     function generateChefCombinations(chefs) {
-        
         var combinations = [];
         var n = chefs.length;
-        
-        // 如果厨师数量少于3个，无法组成组合
-        if (n < 3) {
+
+        if (n <= 0) {
             return combinations;
         }
-        
-        // 生成所有可能的3厨师组合（C(n,3) = n!/(3!(n-3)!)）
-        for (var i = 0; i < n - 2; i++) {
-            for (var j = i + 1; j < n - 1; j++) {
+
+        for (var i = 0; i < n; i++) {
+            combinations.push([chefs[i]]);
+        }
+
+        for (i = 0; i < n - 1; i++) {
+            for (var j = i + 1; j < n; j++) {
+                combinations.push([chefs[i], chefs[j]]);
+            }
+        }
+
+        for (i = 0; i < n - 2; i++) {
+            for (j = i + 1; j < n - 1; j++) {
                 for (var k = j + 1; k < n; k++) {
                     combinations.push([chefs[i], chefs[j], chefs[k]]);
                 }
             }
         }
-        
-        
+
         return combinations;
     }
     
@@ -1570,6 +1576,45 @@ var OneClickQuery = (function($) {
             cannotMakeInfo: cannotMakeInfo,
             cannotMakeCount: Object.keys(cannotMakeInfo).length
         };
+    }
+
+    function getJadeAvailableRunesFromCandidates(candidates, preferredRunes) {
+        var runeMap = {};
+        var availableRunes = [];
+        var i;
+        var j;
+        var rune;
+
+        preferredRunes = Array.isArray(preferredRunes) ? preferredRunes : [];
+
+        for (i = 0; i < candidates.length; i++) {
+            var candidate = candidates[i];
+            if (!candidate || !candidate.runeOptions) {
+                continue;
+            }
+            for (j = 0; j < candidate.runeOptions.length; j++) {
+                rune = candidate.runeOptions[j];
+                if (rune) {
+                    runeMap[rune] = true;
+                }
+            }
+        }
+
+        for (i = 0; i < preferredRunes.length; i++) {
+            rune = preferredRunes[i];
+            if (runeMap[rune]) {
+                availableRunes.push(rune);
+                delete runeMap[rune];
+            }
+        }
+
+        for (rune in runeMap) {
+            if (runeMap.hasOwnProperty(rune)) {
+                availableRunes.push(rune);
+            }
+        }
+
+        return availableRunes;
     }
 
     function encodeChefLoadCode(load0, load1, load2) {
@@ -3355,9 +3400,13 @@ var OneClickQuery = (function($) {
                             jadeBaseRecipeData ? jadeBaseRecipeData.baseCandidates : [],
                             enhancedChefsForJade
                         );
+                        var jadeGroupRunes = getJadeAvailableRunesFromCandidates(
+                            jadeGroupData.candidates,
+                            jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : []
+                        );
                         var jadeOptimization = optimizeJadeRecipeCombination(
                             jadeGroupData.candidates,
-                            jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : [],
+                            jadeGroupRunes,
                             jadeGroupCandidate.groupStats.guestRate,
                             jadeGroupCandidate.groupStats.timeBonus - 100,
                             jadeGroupCandidate.groupStats,
@@ -3399,9 +3448,13 @@ var OneClickQuery = (function($) {
                                 jadeBaseRecipeData ? jadeBaseRecipeData.baseCandidates : [],
                                 enhancedChefsForBilai
                             );
+                            var jadeBilaiGroupRunes = getJadeAvailableRunesFromCandidates(
+                                jadeBilaiGroupData.candidates,
+                                jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : []
+                            );
                             var bilaiOptimization = optimizeJadeRecipeCombination(
                                 jadeBilaiGroupData.candidates,
-                                jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : [],
+                                jadeBilaiGroupRunes,
                                 jadeBilaiCandidate.groupStats.guestRate,
                                 jadeBilaiCandidate.groupStats.timeBonus - 100,
                                 jadeBilaiCandidate.groupStats,
@@ -3645,9 +3698,13 @@ var OneClickQuery = (function($) {
                     jadeBaseRecipeData ? jadeBaseRecipeData.baseCandidates : [],
                     enhancedChefs
                 );
+                var finalJadeAvailableRunes = getJadeAvailableRunesFromCandidates(
+                    finalJadeGroupData.candidates,
+                    jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : []
+                );
                 var finalJadeOptimization = optimizeJadeRecipeCombination(
                     finalJadeGroupData.candidates,
-                    jadeBaseRecipeData ? jadeBaseRecipeData.availableRunes : [],
+                    finalJadeAvailableRunes,
                     totalGuestRate,
                     totalTimeBonus,
                     bestGroupStats,

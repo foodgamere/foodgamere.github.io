@@ -734,6 +734,66 @@ var GuestRateCalculator = (function($) {
             .replace(/'/g, '&#39;');
     }
 
+    function measureJadeMaterialTextWidth(text, font) {
+        var canvas = measureJadeMaterialTextWidth.canvas;
+        if (!canvas) {
+            canvas = document.createElement('canvas');
+            measureJadeMaterialTextWidth.canvas = canvas;
+        }
+
+        var context = canvas.getContext && canvas.getContext('2d');
+        if (!context) {
+            return Math.max(0, String(text || '').length * 12);
+        }
+
+        context.font = font || '13px Arial';
+        return context.measureText(String(text || '')).width;
+    }
+
+    function applyJadeMaterialSelectLayout() {
+        var $row = $("#daily-material-select-jade").closest(".calc-result-row.calc-material-row");
+        var $select = $("#daily-material-select-jade");
+        var $button = $("#btn-material-detail-jade");
+        if (!$row.length || !$select.length || !$button.length) {
+            return;
+        }
+
+        var $wrapper = $select.siblings(".bootstrap-select");
+        if (!$wrapper.length) {
+            return;
+        }
+
+        var $toggle = $wrapper.find("> .dropdown-toggle");
+        var $text = $toggle.find(".filter-option-inner-inner");
+        var visibleText = $.trim($text.text()) || $.trim($toggle.attr("title")) || $.trim($select.find("option:selected").text()) || "";
+        var textStyleTarget = $text.length ? $text.get(0) : $toggle.get(0);
+        var computedStyle = textStyleTarget ? window.getComputedStyle(textStyleTarget) : null;
+        var font = computedStyle && computedStyle.font ? computedStyle.font : '13px Arial';
+        var textWidth = Math.ceil(measureJadeMaterialTextWidth(visibleText, font));
+        var basePadding = 34;
+        var desiredWidth = Math.max(80, textWidth + basePadding);
+        var rowWidth = $row.innerWidth() || 0;
+        var labelWidth = $row.find(".calc-result-item:first-child > label").outerWidth(true) || 0;
+        var buttonWidth = $button.outerWidth(true) || 0;
+        var gap = parseFloat($row.css("column-gap")) || parseFloat($row.css("gap")) || 0;
+        var availableWidth = rowWidth ? Math.max(80, rowWidth - labelWidth - buttonWidth - gap * 2 - 16) : desiredWidth;
+        var targetWidth = Math.min(desiredWidth, availableWidth);
+
+        $wrapper.css("width", targetWidth + "px");
+        $toggle.css("width", targetWidth + "px");
+    }
+
+    function scheduleJadeMaterialSelectLayout() {
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function() {
+                window.requestAnimationFrame(applyJadeMaterialSelectLayout);
+            });
+            return;
+        }
+
+        setTimeout(applyJadeMaterialSelectLayout, 0);
+    }
+
     function renderJadeMaterialSelect(materialDetails) {
         var $select = $("#daily-material-select-jade");
         if (!$select.length) {
@@ -749,6 +809,7 @@ var GuestRateCalculator = (function($) {
             if ($select.data('selectpicker')) {
                 $select.selectpicker('refresh');
             }
+            scheduleJadeMaterialSelectLayout();
             return;
         }
 
@@ -771,6 +832,7 @@ var GuestRateCalculator = (function($) {
         if ($select.data('selectpicker')) {
             $select.selectpicker('refresh');
         }
+        scheduleJadeMaterialSelectLayout();
     }
 
     function renderJadeMaterialDetailModal(materialDetails) {
@@ -880,6 +942,12 @@ var GuestRateCalculator = (function($) {
         $("#star-level-2-jade").selectpicker();
         $("#star-level-3-jade").selectpicker();
         $("#daily-material-select-jade").selectpicker();
+        $("#daily-material-select-jade").on("changed.bs.select change", function() {
+            scheduleJadeMaterialSelectLayout();
+        });
+        $(window).off("resize.jadeMaterialLayout").on("resize.jadeMaterialLayout", function() {
+            scheduleJadeMaterialSelectLayout();
+        });
         loadJadeRecipeValueMap();
         
         // 初始化厨师选择框的分类标签

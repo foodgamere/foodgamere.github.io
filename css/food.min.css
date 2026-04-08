@@ -2086,17 +2086,18 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 .calc-result-row.calc-material-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 6px;
     margin-bottom: 8px;
     padding: 5px 0;
     flex-wrap: nowrap;
+    justify-content: flex-start;
 }
 
 .calc-result-row.calc-material-row .calc-result-item {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 0 10px;
+    padding: 0;
     min-width: 0;
     white-space: nowrap;
 }
@@ -2107,6 +2108,7 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
 .calc-result-row.calc-material-row .calc-result-item:last-child {
     flex: 0 0 auto;
+    margin-left: 0;
 }
 
 .calc-result-item {
@@ -2171,8 +2173,8 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
 .calc-result-item .bootstrap-select.material-daily-select,
 .calc-result-item .bootstrap-select.material-daily-select > .dropdown-toggle {
-    min-width: 140px !important;
-    max-width: 175px;
+    min-width: 80px;
+    max-width: none;
     height: 30px;
     font-size: 13px;
 }
@@ -2425,7 +2427,9 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     }
 
     #btn-material-detail-jade {
-        width: 100%;
+        width: auto;
+        padding: 5px 8px;
+        font-size: 12px;
     }
     
     /* 确保包含按钮的容器不会超出 */
@@ -2434,7 +2438,8 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     }
 
     .calc-result-row.calc-material-row {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        align-items: center;
         gap: 8px;
     }
     
@@ -2449,8 +2454,23 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     }
 
     .calc-result-row.calc-material-row .calc-result-item {
-        flex: 1 1 auto;
-        max-width: 100%;
+        max-width: none;
+        padding: 0;
+    }
+
+    .calc-result-row.calc-material-row .calc-result-item:first-child {
+        flex: 0 1 auto;
+    }
+
+    .calc-result-row.calc-material-row .calc-result-item:last-child {
+        flex: 0 0 auto;
+    }
+
+    .calc-result-row.calc-material-row .calc-result-item .bootstrap-select.material-daily-select,
+    .calc-result-row.calc-material-row .calc-result-item .bootstrap-select.material-daily-select > .dropdown-toggle {
+        min-width: 0;
+        width: auto;
+        max-width: none;
     }
 }
 
@@ -2471,13 +2491,15 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     }
 
     .calc-result-row.calc-material-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 8px;
+        display: flex;
+        grid-template-columns: none;
+        gap: 6px;
+        flex-wrap: nowrap;
     }
 
     .calc-result-row.calc-material-row .calc-result-item {
         padding: 0;
+        max-width: none;
     }
     
     #sync-guest-double {
@@ -2488,8 +2510,14 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
     .calc-result-item .bootstrap-select.material-daily-select,
     .calc-result-item .bootstrap-select.material-daily-select > .dropdown-toggle {
-        max-width: 100%;
-        width: 100% !important;
+        min-width: 0;
+        width: auto;
+        max-width: none;
+    }
+
+    #btn-material-detail-jade {
+        padding: 5px 6px;
+        font-size: 12px;
     }
 }
 
@@ -2720,6 +2748,12 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     
     #oneclick-settings-modal .rune-item {
         min-width: calc(50% - 4px);
+    }
+
+    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-useExistingConfig),
+    #oneclick-settings-modal .settings-row > .col-xs-6:has(#setting-singleRecipePerRune) {
+        width: 100%;
+        float: none;
     }
 }
 
