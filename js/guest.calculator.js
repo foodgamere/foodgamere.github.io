@@ -719,6 +719,7 @@ var GuestRateCalculator = (function($) {
                 recipeEntries.push({
                     recipeName: recipeData.name,
                     recipeId: recipeData.recipeId || recipeData.id || '',
+                    rarity: Number(recipeData.rarity) || 5,
                     quantity: recipeQuantity,
                     positionIndex: Number(c) + 1,
                     slotIndex: Number(r) + 1,
@@ -798,13 +799,16 @@ var GuestRateCalculator = (function($) {
                 continue;
             }
             var totalTime = recipeEntry.totalTime || 0;
+            var minQuantity = MIN_QUANTITY_MAP[recipeEntry.rarity] || 7;
             var rankValue = normalizeRecipeRankValue(recipeEntry.rankVal, recipeEntry);
             var rankText = recipeEntry.rankDisp || getRankTextByValue(rankValue);
             var recipeRuneRate = getRuneRateByRank(rankText);
             var recipeHundredPotOutput = calculateHundredPotOutput(actualGuestRate, recipeRuneRate, critRate);
             var singlePotOutput = recipeHundredPotOutput / 100;
             var guestMultiplier = Number(recipeEntry.guestCount) >= 2 ? 2 : 1;
-            var dailyRune = totalTime > 0 ? 86400 / totalTime * singlePotOutput * guestMultiplier : 0;
+            var dailyRune = (recipeEntry.quantity >= minQuantity && totalTime > 0)
+                ? 86400 / totalTime * singlePotOutput * guestMultiplier
+                : 0;
             recipeDetails.push({
                 recipeName: recipeEntry.recipeName,
                 quantity: recipeEntry.quantity,
