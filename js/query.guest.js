@@ -399,7 +399,7 @@ var OneClickQuery = (function($) {
         return Math.floor(hundredPotOutput * 100) / 100 / 100;
     }
 
-    function calculateRecipeDailyRuneOutput(cookingTime, groupStats, runeRateValue) {
+    function calculateRecipeDailyRuneOutput(cookingTime, groupStats, runeRateValue, guestCount) {
         if (!cookingTime || cookingTime <= 0) {
             return 0;
         }
@@ -409,7 +409,8 @@ var OneClickQuery = (function($) {
             return 0;
         }
 
-        return 86400 / cookingTime * singlePotOutput;
+        var guestMultiplier = Number(guestCount) >= 2 ? 2 : 1;
+        return 86400 / cookingTime * singlePotOutput * guestMultiplier;
     }
 
     function formatDebugNumber(value) {
@@ -2299,7 +2300,8 @@ var OneClickQuery = (function($) {
                         var assignmentDailyRuneOutput = calculateRecipeDailyRuneOutput(
                             cookingTime,
                             groupStats,
-                            calculateRuneRateByRankValue(rank)
+                            calculateRuneRateByRankValue(rank),
+                            guestCount
                         );
                         eligibleAssignments.push({
                             chefIndex: c,
@@ -3574,9 +3576,32 @@ var OneClickQuery = (function($) {
         return String(positionIndex) + '-' + String(slotIndex);
     }
 
-    function getAppliedRecipeRune(positionIndex, slotIndex) {
+    function getAppliedRecipeRune(positionIndex, slotIndex, recipeIdentity) {
         var key = buildRecipeRuneMapKey(positionIndex, slotIndex);
-        return appliedRecipeRuneMap[key] || '';
+        var appliedInfo = appliedRecipeRuneMap[key];
+        if (!appliedInfo) {
+            return '';
+        }
+        if (typeof appliedInfo === 'string') {
+            return appliedInfo;
+        }
+
+        if (recipeIdentity) {
+            var identityRecipeId = recipeIdentity.recipeId || recipeIdentity.id || '';
+            var identityRecipeName = recipeIdentity.recipeName || recipeIdentity.name || '';
+            if (appliedInfo.recipeId && identityRecipeId && String(appliedInfo.recipeId) !== String(identityRecipeId)) {
+                return '';
+            }
+            if (appliedInfo.recipeName && identityRecipeName && String(appliedInfo.recipeName) !== String(identityRecipeName)) {
+                return '';
+            }
+        }
+
+        return appliedInfo.rune || '';
+    }
+
+    function clearAppliedRecipeRune(positionIndex, slotIndex) {
+        delete appliedRecipeRuneMap[buildRecipeRuneMapKey(positionIndex, slotIndex)];
     }
     
     /**
@@ -6137,8 +6162,11 @@ var OneClickQuery = (function($) {
                             calCustomRule.rules[0].custom[i].recipes[j].rune =
                                 (pos.recipeDetails && pos.recipeDetails[j] && pos.recipeDetails[j].rune) ? pos.recipeDetails[j].rune : '';
                         }
-                        appliedRecipeRuneMap[buildRecipeRuneMapKey(i, j)] =
-                            (pos.recipeDetails && pos.recipeDetails[j] && pos.recipeDetails[j].rune) ? pos.recipeDetails[j].rune : '';
+                        appliedRecipeRuneMap[buildRecipeRuneMapKey(i, j)] = {
+                            recipeId: recipe.recipeId || '',
+                            recipeName: recipe.name || '',
+                            rune: (pos.recipeDetails && pos.recipeDetails[j] && pos.recipeDetails[j].rune) ? pos.recipeDetails[j].rune : ''
+                        };
                     }
                 }
             }
@@ -6272,6 +6300,7 @@ var OneClickQuery = (function($) {
         showSettingsDialog: showSettingsDialog,
         applyResultToSelectors: applyResultToSelectors,
         getAppliedRecipeRune: getAppliedRecipeRune,
+        clearAppliedRecipeRune: clearAppliedRecipeRune,
         getSelectedRunes: getSelectedRunes,
         // 暴露辅助函数供外部使用
         getRecipeRank: getRecipeRank,

@@ -711,12 +711,14 @@ var GuestRateCalculator = (function($) {
                 var recipeItem = recipes[r];
                 var recipeData = recipeItem && recipeItem.data;
                 var recipeQuantity = parseInt(recipeItem && recipeItem.quantity, 10) || 0;
+                var recipeRuneInfo = getRecipeRuneGuestInfo(recipeData);
                 if (!recipeData || !recipeData.name || recipeQuantity <= 0) {
                     continue;
                 }
 
                 recipeEntries.push({
                     recipeName: recipeData.name,
+                    recipeId: recipeData.recipeId || recipeData.id || '',
                     quantity: recipeQuantity,
                     positionIndex: Number(c) + 1,
                     slotIndex: Number(r) + 1,
@@ -725,19 +727,64 @@ var GuestRateCalculator = (function($) {
                     rankVal: recipeItem && recipeItem.rankVal,
                     rankDisp: recipeItem && recipeItem.rankDisp,
                     rune: (function() {
+                        if (recipeRuneInfo.runeName) {
+                            return recipeRuneInfo.runeName;
+                        }
                         if (recipeItem && recipeItem.rune) {
                             return recipeItem.rune;
                         }
                         if (typeof OneClickQuery !== 'undefined' && OneClickQuery && typeof OneClickQuery.getAppliedRecipeRune === 'function') {
-                            return OneClickQuery.getAppliedRecipeRune(Number(c), Number(r)) || '';
+                            return OneClickQuery.getAppliedRecipeRune(Number(c), Number(r), {
+                                recipeId: recipeData.recipeId || recipeData.id || '',
+                                recipeName: recipeData.name || ''
+                            }) || '';
                         }
                         return '';
-                    })()
+                    })(),
+                    guestCount: recipeRuneInfo.guestCount
                 });
             }
         }
 
         return recipeEntries;
+    }
+
+    function getRecipeRuneGuestInfo(recipeData) {
+        var recipeName = recipeData && recipeData.name;
+        var gameData = typeof calCustomRule !== 'undefined' && calCustomRule ? calCustomRule.gameData : null;
+        if (!recipeName || !gameData || !gameData.guests || !gameData.guests.length) {
+            return {
+                runeName: '',
+                guestCount: 1
+            };
+        }
+
+        var runeName = '';
+        var count = 0;
+        for (var i = 0; i < gameData.guests.length; i++) {
+            var guest = gameData.guests[i];
+            if (!guest || !guest.gifts || !guest.gifts.length) {
+                continue;
+            }
+
+            for (var j = 0; j < guest.gifts.length; j++) {
+                if (guest.gifts[j] &&
+                    guest.gifts[j].recipe === recipeName &&
+                    guest.gifts[j].antique &&
+                    ALL_RUNES.indexOf(guest.gifts[j].antique) >= 0) {
+                    if (!runeName) {
+                        runeName = guest.gifts[j].antique;
+                    }
+                    count++;
+                    break;
+                }
+            }
+        }
+
+        return {
+            runeName: runeName,
+            guestCount: count || 1
+        };
     }
 
     function getRuneModeRecipeDetails(actualGuestRate, critRate) {
@@ -756,7 +803,8 @@ var GuestRateCalculator = (function($) {
             var recipeRuneRate = getRuneRateByRank(rankText);
             var recipeHundredPotOutput = calculateHundredPotOutput(actualGuestRate, recipeRuneRate, critRate);
             var singlePotOutput = recipeHundredPotOutput / 100;
-            var dailyRune = totalTime > 0 ? 86400 / totalTime * singlePotOutput : 0;
+            var guestMultiplier = Number(recipeEntry.guestCount) >= 2 ? 2 : 1;
+            var dailyRune = totalTime > 0 ? 86400 / totalTime * singlePotOutput * guestMultiplier : 0;
             recipeDetails.push({
                 recipeName: recipeEntry.recipeName,
                 quantity: recipeEntry.quantity,
@@ -765,7 +813,8 @@ var GuestRateCalculator = (function($) {
                 totalTime: totalTime,
                 dailyRune: dailyRune,
                 rankText: rankText,
-                rune: recipeEntry.rune || ''
+                rune: recipeEntry.rune || '',
+                guestCount: recipeEntry.guestCount || 1
             });
             totalDailyRune += dailyRune;
         }
@@ -1276,6 +1325,47 @@ var GuestRateCalculator = (function($) {
         renderGuestMaterialDetailModal(runeOutputs.materialDetails);
     }
 
+    function scheduleGuestSupplementOutputsSync() {
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(function() {
+                window.requestAnimationFrame(function() {
+                    syncGuestRateModeSupplementOutputs();
+                });
+            });
+            return;
+        }
+
+        setTimeout(function() {
+            syncGuestRateModeSupplementOutputs();
+        }, 0);
+    }
+
+    function bindGuestSupplementSceneListeners() {
+        $(document)
+            .off("changed.bs.select.guestSupplementRecipe", "select.select-picker-recipe")
+            .on("changed.bs.select.guestSupplementRecipe", "select.select-picker-recipe", function() {
+                var positionIndex = $(this).closest(".cal-custom-item").find(".selected-item").index($(this).closest(".selected-item"));
+                var slotIndex = $(this).closest(".selected-item").find(".recipe-box").index($(this).closest(".recipe-box"));
+                if (typeof OneClickQuery !== 'undefined' && OneClickQuery && typeof OneClickQuery.clearAppliedRecipeRune === 'function' &&
+                    positionIndex >= 0 && slotIndex >= 0) {
+                    OneClickQuery.clearAppliedRecipeRune(positionIndex, slotIndex);
+                }
+                scheduleGuestSupplementOutputsSync();
+            })
+            .off("input.guestSupplementQuantity change.guestSupplementQuantity", ".recipe-box .recipe-quantity input")
+            .on("input.guestSupplementQuantity change.guestSupplementQuantity", ".recipe-box .recipe-quantity input", function() {
+                scheduleGuestSupplementOutputsSync();
+            })
+            .off("click.guestSupplementFlags change.guestSupplementFlags", ".recipe-box .recipe-condiment input, .recipe-box .recipe-ex input")
+            .on("click.guestSupplementFlags change.guestSupplementFlags", ".recipe-box .recipe-condiment input, .recipe-box .recipe-ex input", function() {
+                scheduleGuestSupplementOutputsSync();
+            })
+            .off("changed.bs.select.guestSupplementChef", "select.select-picker-chef, select.select-picker-equip, select.select-picker-disk-level, select.select-picker-amber, select.select-picker-condiment")
+            .on("changed.bs.select.guestSupplementChef", "select.select-picker-chef, select.select-picker-equip, select.select-picker-disk-level, select.select-picker-amber, select.select-picker-condiment", function() {
+                scheduleGuestSupplementOutputsSync();
+            });
+    }
+
     function ensureGuestSupplementSyncOnCalCustomResults() {
         if (hasWrappedCalCustomResults || typeof calCustomResults !== 'function') {
             return;
@@ -1353,6 +1443,7 @@ var GuestRateCalculator = (function($) {
      */
     function init() {
         ensureGuestSupplementSyncOnCalCustomResults();
+        bindGuestSupplementSceneListeners();
 
         // 初始化selectpicker
         $("#star-level").selectpicker();
