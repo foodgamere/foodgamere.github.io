@@ -1,0 +1,52 @@
+# 默认忽略的文件
+/shelf/
+/workspace.xml
+# 基于编辑器的 HTTP 客户端请求
+/httpRequests/
+# 依赖于环境的 Maven 主目录路径
+/mavenHomeManager.xml
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml
+
+.idea/
+*.iml
+
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+
+# 下载脚本
+download_*.py
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 日志
+*.log
+
+# 临时文件
+*.tmp
+*.temp
+
+#claude工作区
+.claude/
