@@ -2471,7 +2471,7 @@ var GuestRateCalculator = (function($) {
                         baseRate = (0.08 + (quantity - 12) * 0.0162) * (100 + result.guestRate);
                         break;
                     case 4:
-                        baseRate = (0.05 + (quantity - 10) * 0.001) * (100 + result.guestRate);
+                        baseRate = (0.05 + (quantity - 10) * 0.01) * (100 + result.guestRate);
                         break;
                     case 5:
                         baseRate = (0.1 + (quantity - 7) * 0.0085) * (100 + result.guestRate);
