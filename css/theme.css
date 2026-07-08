@@ -1856,3 +1856,8 @@ html[data-theme="dark"] .recipe-box .recipe-box-2:not(.no-rarity.no-skill.no-mat
 html[data-theme="dark"] .btn-resize {
     color: var(--theme-muted) !important;
 }
+
+html[data-theme="dark"] .guest-rate-calculator .calc-result-row.calc-material-row .calc-result-item label,
+html[data-theme="dark"] .guest-rate-calculator .calc-result-row.calc-material-row .material-action-label {
+    color: #fff !important;
+}

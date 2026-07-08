@@ -285,6 +285,13 @@ table.dataTable tbody>tr.selected,table.dataTable tbody>tr>.selected {
     white-space: nowrap
 }
 
+.selected-sum-material-row {
+    display: flex;
+    margin-top: 6px;
+    margin-left: 0;
+    width: 100%
+}
+
 .selected-sum .bootstrap-select.normal-material-select,
 .selected-sum .bootstrap-select.normal-material-select>.dropdown-toggle {
     min-width: 0;
@@ -305,6 +312,20 @@ table.dataTable tbody>tr.selected,table.dataTable tbody>tr>.selected {
 .selected-sum .bootstrap-select.normal-material-select .filter-option-inner,
 .selected-sum .bootstrap-select.normal-material-select .filter-option-inner-inner {
     white-space: nowrap
+}
+
+.selected-sum .material-interval-dropdown,
+.selected-sum .material-interval-dropdown>.material-interval-toggle {
+    width: 86px;
+    min-width: 86px;
+    max-width: 86px;
+    height: 30px;
+    font-size: 13px
+}
+
+.selected-sum .material-interval-dropdown>.material-interval-toggle {
+    padding: 4px 8px;
+    text-align: center
 }
 
 .btn-resize {
@@ -2139,6 +2160,59 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     gap: 6px;
     flex: 0 0 auto;
     min-width: 0;
+    position: relative;
+    isolation: isolate;
+}
+
+.calc-result-row.calc-material-row .calc-material-actions .bootstrap-select.material-daily-select {
+    position: relative;
+    z-index: 1;
+    flex: 0 0 auto;
+}
+
+.calc-result-row.calc-material-row .calc-material-actions .material-action-label {
+    white-space: nowrap;
+    font-size: 13px;
+    color: #333;
+}
+
+.guest-rate-calculator .calc-result-row.calc-material-row .calc-result-item label,
+.guest-rate-calculator .calc-result-row.calc-material-row .material-action-label {
+    color: #333;
+}
+
+.calc-result-row.calc-material-row .calc-material-actions .material-interval-dropdown {
+    position: relative;
+    z-index: 2;
+    flex: 0 0 auto;
+    width: 86px;
+    min-width: 86px;
+    max-width: 86px;
+    height: 30px;
+    font-size: 13px;
+}
+
+.calc-result-row.calc-material-row .calc-material-actions .material-interval-dropdown > .material-interval-toggle {
+    width: 86px;
+    min-width: 86px;
+    max-width: 86px;
+    height: 30px;
+    font-size: 13px;
+    padding: 4px 8px;
+    text-align: center;
+}
+
+.material-interval-dropdown .material-interval-menu {
+    max-height: 260px;
+    overflow-y: auto;
+    min-width: 86px;
+}
+
+.material-interval-floating-menu {
+    z-index: 1800 !important;
+    max-height: 260px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
 }
 
 .calc-result-row.calc-material-row .calc-result-item {
@@ -2399,6 +2473,8 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     padding: 5px 12px;
     font-size: 13px;
     height: 30px;
+    position: relative;
+    z-index: 2;
 }
 
 #guest-material-detail-modal .modal-dialog,
@@ -2449,6 +2525,10 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
     .jade-material-recipe-grid {
         grid-template-columns: repeat(3, 280px);
+    }
+
+    .jade-material-recipe-card {
+        min-height: 150px;
     }
 }
 
@@ -2519,6 +2599,7 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
 
     .jade-material-recipe-card {
         width: min(280px, 100%);
+        min-height: 0;
     }
 
     .calc-result-row.calc-material-row {

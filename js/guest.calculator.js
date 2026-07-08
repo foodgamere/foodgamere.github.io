@@ -67,6 +67,8 @@ var GuestRateCalculator = (function($) {
     var isSyncingJadeMode = false;
     var jadeRecipeValueMap = {};
     var hasWrappedCalCustomResults = false;
+    var guestMaterialIntervalMinutes = 0;
+    var jadeMaterialIntervalMinutes = 0;
     
     // ========================================
     // 私有函数 - 输入验证
@@ -652,7 +654,7 @@ var GuestRateCalculator = (function($) {
     }
 
     function calculateJadeModeOutputs() {
-        var jadeBusinessIntervalSeconds = 30;
+        var jadeBusinessIntervalSeconds = getMaterialIntervalSeconds("#material-interval-input-jade");
         var totalTimeSeconds = getCurrentTotalTimeSeconds();
         var actualGuestRate = parseFloat($("#actual-guest-rate").text()) || 0;
         var runeRate = parseFloat($("#rune-rate").text()) || 0;
@@ -674,10 +676,10 @@ var GuestRateCalculator = (function($) {
     }
 
     function calculateRuneModeOutputs() {
-        var businessIntervalSeconds = 30;
+        var businessIntervalSeconds = getMaterialIntervalSeconds("#material-interval-input");
         var actualGuestRate = parseFloat($("#actual-guest-rate").text()) || 0;
         var critRate = parseFloat($("#total-crit-rate").text()) || 0;
-        var runeDetails = getRuneModeRecipeDetails(actualGuestRate, critRate);
+        var runeDetails = getRuneModeRecipeDetails(actualGuestRate, critRate, businessIntervalSeconds);
         var totalTimeSeconds = getCurrentTotalTimeSeconds();
         var dailyCycles = totalTimeSeconds > 0 ? 86400 / (totalTimeSeconds + businessIntervalSeconds) : 0;
         var materialDetails = getJadeMaterialDetails(dailyCycles);
@@ -688,6 +690,15 @@ var GuestRateCalculator = (function($) {
             runeDetails: runeDetails,
             materialDetails: materialDetails
         };
+    }
+
+    function recalcCurrentGuestModeOutputs() {
+        var isJadeMode = $("#chk-guest-rate-submode").prop("checked");
+        if (isJadeMode) {
+            syncJadeModeFields();
+        } else {
+            syncGuestRateModeSupplementOutputs();
+        }
     }
 
     function getCurrentCustomRecipeEntries() {
@@ -788,10 +799,11 @@ var GuestRateCalculator = (function($) {
         };
     }
 
-    function getRuneModeRecipeDetails(actualGuestRate, critRate) {
+    function getRuneModeRecipeDetails(actualGuestRate, critRate, businessIntervalSeconds) {
         var recipeEntries = getCurrentCustomRecipeEntries();
         var recipeDetails = [];
         var totalDailyRune = 0;
+        var intervalSeconds = Math.max(0, Number(businessIntervalSeconds) || 0);
 
         for (var i = 0; i < recipeEntries.length; i++) {
             var recipeEntry = recipeEntries[i];
@@ -807,7 +819,7 @@ var GuestRateCalculator = (function($) {
             var singlePotOutput = recipeHundredPotOutput / 100;
             var guestMultiplier = Number(recipeEntry.guestCount) >= 2 ? 2 : 1;
             var dailyRune = (recipeEntry.quantity >= minQuantity && totalTime > 0)
-                ? 86400 / totalTime * singlePotOutput * guestMultiplier
+                ? 86400 / (totalTime + intervalSeconds) * singlePotOutput * guestMultiplier
                 : 0;
             recipeDetails.push({
                 recipeName: recipeEntry.recipeName,
@@ -977,6 +989,136 @@ var GuestRateCalculator = (function($) {
         return context.measureText(String(text || '')).width;
     }
 
+    function buildMaterialIntervalDropdownHtml(value) {
+        var html = '<button class="btn btn-default btn-sm dropdown-toggle material-interval-toggle" type="button" aria-haspopup="true" aria-expanded="false">' + value + '分钟 <span class="caret"></span></button>';
+        html += '<ul class="dropdown-menu material-interval-menu">';
+        for (var i = 0; i <= 60; i++) {
+            html += '<li' + (i === value ? ' class="active"' : '') + '><a href="#" class="material-interval-option" data-value="' + i + '">' + i + '分钟</a></li>';
+        }
+        html += '</ul>';
+        return html;
+    }
+
+    function renderMaterialIntervalOptions(selector, selectedMinutes) {
+        var $control = $(selector);
+        if (!$control.length) {
+            return;
+        }
+        var value = parseInt(selectedMinutes, 10);
+        if (isNaN(value)) {
+            value = parseInt($control.attr("data-value"), 10);
+        }
+        if (isNaN(value) || value < 0) {
+            value = 0;
+        } else if (value > 60) {
+            value = 60;
+        }
+        $control.attr("data-value", value).html(buildMaterialIntervalDropdownHtml(value));
+    }
+
+    function normalizeMaterialIntervalInput(selector) {
+        var $control = $(selector);
+        if (!$control.length) {
+            return;
+        }
+        var value = parseInt($control.attr("data-value"), 10);
+        if (isNaN(value) || value < 0) {
+            value = 0;
+        } else if (value > 60) {
+            value = 60;
+        }
+        $control.attr("data-value", value);
+        $control.find(".material-interval-toggle").html(value + '分钟 <span class="caret"></span>');
+        $control.find(".material-interval-menu li").removeClass("active");
+        $control.find('.material-interval-option[data-value="' + value + '"]').parent().addClass("active");
+        return value;
+    }
+
+    function closeFloatingMaterialIntervalMenu() {
+        $(".material-interval-floating-menu").remove();
+        $(".material-interval-dropdown").removeClass("open");
+        $(".material-interval-toggle").attr("aria-expanded", "false");
+    }
+
+    function closeOpenSelectpickers() {
+        $(".bootstrap-select.open").each(function() {
+            var $select = $(this).find("select");
+            if ($select.length && $select.data("selectpicker")) {
+                $select.selectpicker("toggle");
+            } else {
+                $(this).removeClass("open");
+            }
+        });
+    }
+
+    function openFloatingMaterialIntervalMenu(selector) {
+        var $control = $(selector);
+        var $toggle = $control.find(".material-interval-toggle");
+        if (!$control.length || !$toggle.length) {
+            return;
+        }
+
+        closeFloatingMaterialIntervalMenu();
+        closeOpenSelectpickers();
+
+        var value = normalizeMaterialIntervalInput(selector);
+        var html = '<ul class="dropdown-menu material-interval-menu material-interval-floating-menu" data-target="' + selector + '">';
+        for (var i = 0; i <= 60; i++) {
+            html += '<li' + (i === value ? ' class="active"' : '') + '><a href="#" class="material-interval-option" data-value="' + i + '">' + i + '分钟</a></li>';
+        }
+        html += '</ul>';
+
+        var $menu = $(html).appendTo("body");
+        var offset = $toggle.offset();
+        var menuHeight = Math.min(260, $menu.outerHeight() || 260);
+        var top = offset.top + $toggle.outerHeight();
+        var left = offset.left;
+        var viewportBottom = $(window).scrollTop() + $(window).height();
+        if (top + menuHeight > viewportBottom && offset.top - menuHeight > $(window).scrollTop()) {
+            top = offset.top - menuHeight;
+        }
+
+        $menu.css({
+            display: "block",
+            position: "absolute",
+            top: top,
+            left: left,
+            width: Math.max(86, $toggle.outerWidth()),
+            minWidth: Math.max(86, $toggle.outerWidth()),
+            maxHeight: "260px",
+            overflowY: "auto",
+            overflowX: "hidden",
+            zIndex: 1800
+        });
+        $control.addClass("open");
+        $toggle.attr("aria-expanded", "true");
+    }
+
+    function getMaterialIntervalSeconds(selector) {
+        if (selector === "#material-interval-input") {
+            return guestMaterialIntervalMinutes * 60;
+        }
+        if (selector === "#material-interval-input-jade") {
+            return jadeMaterialIntervalMinutes * 60;
+        }
+        var minutes = normalizeMaterialIntervalInput(selector);
+        return minutes * 60;
+    }
+
+    function resolveIntervalSelection(selector) {
+        var $control = $(selector);
+        if (!$control.length) {
+            return 0;
+        }
+        var minutes = normalizeMaterialIntervalInput(selector);
+        if (selector === "#material-interval-input") {
+            guestMaterialIntervalMinutes = minutes;
+        } else if (selector === "#material-interval-input-jade") {
+            jadeMaterialIntervalMinutes = minutes;
+        }
+        return minutes;
+    }
+
     function applyDailySelectLayout(selectSelector, buttonSelector) {
         var $select = $(selectSelector);
         var $row = $select.closest(".calc-result-row.calc-material-row");
@@ -1026,7 +1168,15 @@ var GuestRateCalculator = (function($) {
         var panelWidth = $row.closest("#pane-cal-custom, .guest-rate-calculator, .box, .panel-body").innerWidth() || 0;
         var viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
         var labelWidth = $row.find(".calc-result-item:first-child > label").outerWidth(true) || 0;
+        var actionLabelWidth = 0;
+        $row.find(".material-action-label").each(function() {
+            actionLabelWidth += $(this).outerWidth(true) || 0;
+        });
         var buttonWidth = $button.length ? ($button.outerWidth(true) || 0) : 0;
+        var intervalWidth = 0;
+        $row.find(".material-interval-dropdown").each(function() {
+            intervalWidth += $(this).outerWidth(true) || 0;
+        });
         var gap = parseFloat($row.css("column-gap")) || parseFloat($row.css("gap")) || 0;
         var isMobileViewport = (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) || (!window.matchMedia && window.innerWidth <= 768);
         var referenceWidth = rowWidth;
@@ -1036,7 +1186,7 @@ var GuestRateCalculator = (function($) {
                 referenceWidth = viewportWidth;
             }
         }
-        var availableWidth = referenceWidth ? Math.max(minWidth, referenceWidth - labelWidth - buttonWidth - gap * 2 - 16) : desiredWidth;
+        var availableWidth = referenceWidth ? Math.max(minWidth, referenceWidth - labelWidth - actionLabelWidth - buttonWidth - intervalWidth - gap * 4 - 16) : desiredWidth;
         var isDesktopMaterialGroup = $row.closest(".calc-material-group").length > 0 &&
             ((window.matchMedia && window.matchMedia("(min-width: 769px)").matches) || (!window.matchMedia && window.innerWidth > 768));
         var targetWidth = isDesktopMaterialGroup ? desiredWidth : Math.min(desiredWidth, availableWidth);
@@ -1045,7 +1195,7 @@ var GuestRateCalculator = (function($) {
         if (isMobileViewport) {
             var mobileDropdownMaxWidth = Math.max(targetWidth, viewportWidth - 24);
             var mobileAvailableWidth = referenceWidth
-                ? Math.max(mobileMinClosedWidth, referenceWidth - labelWidth - buttonWidth - gap * 2 - 16)
+                ? Math.max(mobileMinClosedWidth, referenceWidth - labelWidth - actionLabelWidth - buttonWidth - intervalWidth - gap * 4 - 16)
                 : currentTextWidth;
             targetWidth = Math.min(currentTextWidth, mobileAvailableWidth);
             dropdownWidth = Math.min(desiredWidth, mobileDropdownMaxWidth);
@@ -1448,6 +1598,12 @@ var GuestRateCalculator = (function($) {
     function init() {
         ensureGuestSupplementSyncOnCalCustomResults();
         bindGuestSupplementSceneListeners();
+        guestMaterialIntervalMinutes = 0;
+        jadeMaterialIntervalMinutes = 0;
+        renderMaterialIntervalOptions("#material-interval-input", guestMaterialIntervalMinutes);
+        renderMaterialIntervalOptions("#material-interval-input-jade", jadeMaterialIntervalMinutes);
+        normalizeMaterialIntervalInput("#material-interval-input");
+        normalizeMaterialIntervalInput("#material-interval-input-jade");
 
         // 初始化selectpicker
         $("#star-level").selectpicker();
@@ -1467,6 +1623,7 @@ var GuestRateCalculator = (function($) {
             scheduleDailySelectLayout(selectId, buttonSelector);
         });
         $("#daily-rune-select, #daily-material-select, #daily-material-select-jade").on("shown.bs.select", function() {
+            closeFloatingMaterialIntervalMenu();
             var selectId = "#" + this.id;
             var buttonSelector = selectId === "#daily-material-select"
                 ? "#btn-material-detail"
@@ -1475,6 +1632,51 @@ var GuestRateCalculator = (function($) {
         });
         $("#daily-material-select-jade").on("changed.bs.select change", function() {
             scheduleJadeMaterialSelectLayout();
+        });
+        $(document).off("shown.bs.select.materialIntervalMutex").on("shown.bs.select.materialIntervalMutex", "select", function() {
+            closeFloatingMaterialIntervalMenu();
+        });
+        $(document).off("click.materialIntervalToggle", "#material-interval-input .material-interval-toggle").on("click.materialIntervalToggle", "#material-interval-input .material-interval-toggle", function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if ($("#material-interval-input").hasClass("open")) {
+                closeFloatingMaterialIntervalMenu();
+            } else {
+                openFloatingMaterialIntervalMenu("#material-interval-input");
+            }
+        });
+        $(document).off("click.materialIntervalJadeToggle", "#material-interval-input-jade .material-interval-toggle").on("click.materialIntervalJadeToggle", "#material-interval-input-jade .material-interval-toggle", function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if ($("#material-interval-input-jade").hasClass("open")) {
+                closeFloatingMaterialIntervalMenu();
+            } else {
+                openFloatingMaterialIntervalMenu("#material-interval-input-jade");
+            }
+        });
+        $(document).off("click.materialInterval", '.material-interval-floating-menu[data-target="#material-interval-input"] .material-interval-option').on("click.materialInterval", '.material-interval-floating-menu[data-target="#material-interval-input"] .material-interval-option', function(event) {
+            event.preventDefault();
+            $("#material-interval-input").attr("data-value", parseInt($(this).attr("data-value"), 10) || 0);
+            resolveIntervalSelection("#material-interval-input");
+            closeFloatingMaterialIntervalMenu();
+            recalcCurrentGuestModeOutputs();
+            scheduleDailySelectLayout("#daily-material-select", "#btn-material-detail");
+        });
+        $(document).off("click.materialIntervalJade", '.material-interval-floating-menu[data-target="#material-interval-input-jade"] .material-interval-option').on("click.materialIntervalJade", '.material-interval-floating-menu[data-target="#material-interval-input-jade"] .material-interval-option', function(event) {
+            event.preventDefault();
+            $("#material-interval-input-jade").attr("data-value", parseInt($(this).attr("data-value"), 10) || 0);
+            resolveIntervalSelection("#material-interval-input-jade");
+            closeFloatingMaterialIntervalMenu();
+            recalcCurrentGuestModeOutputs();
+            scheduleJadeMaterialSelectLayout();
+        });
+        $(document).off("click.materialIntervalClose").on("click.materialIntervalClose", function(event) {
+            if (!$(event.target).closest(".material-interval-floating-menu, #material-interval-input, #material-interval-input-jade").length) {
+                closeFloatingMaterialIntervalMenu();
+            }
+        });
+        $(window).off("resize.materialInterval scroll.materialInterval").on("resize.materialInterval scroll.materialInterval", function() {
+            closeFloatingMaterialIntervalMenu();
         });
         $(window).off("resize.guestDailyLayout").on("resize.guestDailyLayout", function() {
             scheduleDailySelectLayout("#daily-rune-select");
