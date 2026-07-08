@@ -166,7 +166,9 @@ var DefaultCompetitionOptimizer = (function() {
             recipeSkill: $("#chk-cal-recipe-skill").val() || [],
             multipleSkill: $("#chk-cal-recipe-multiple-skill").prop("checked"),
             recipeCondiment: $("#chk-cal-recipe-condiment").val() || [],
-            excludeMaterials: $("#chk-cal-recipe-material-exclude").val() || [],
+            excludeMaterialRules: typeof window.getExcludeMaterialRules === 'function'
+                ? window.getExcludeMaterialRules("#chk-cal-recipe-material-exclude")
+                : [],
             selectedChefs: $("#select-competition-chefs").val() || []
         };
 
@@ -247,16 +249,8 @@ var DefaultCompetitionOptimizer = (function() {
                     if (!skillPass) continue;
                 }
                 if (_cachedConfig.recipeCondiment.length > 0 && _cachedConfig.recipeCondiment.indexOf(rd.condiment) < 0) continue;
-                if (_cachedConfig.excludeMaterials.length > 0 && rd.materials) {
-                    var matExcluded = false;
-                    for (var ei = 0; ei < rd.materials.length; ei++) {
-                        if (_cachedConfig.excludeMaterials.indexOf(rd.materials[ei].material.toString()) >= 0) {
-                            matExcluded = true;
-                            break;
-                        }
-                    }
-                    if (matExcluded) continue;
-                }
+                if (typeof window.isRecipeExcludedByMaterialRules === 'function'
+                    && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                 _menus.push(rd);
                 _recipeMap[rd.recipeId] = rd;
             }

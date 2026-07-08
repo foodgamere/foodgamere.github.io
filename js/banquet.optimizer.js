@@ -1154,7 +1154,9 @@ var BanquetOptimizer = (function() {
             recipeSkill: $("#chk-cal-recipe-skill").val() || [],
             multipleSkill: $("#chk-cal-recipe-multiple-skill").prop("checked"),
             recipeCondiment: $("#chk-cal-recipe-condiment").val() || [],
-            excludeMaterials: $("#chk-cal-recipe-material-exclude").val() || [],
+            excludeMaterialRules: typeof window.getExcludeMaterialRules === 'function'
+                ? window.getExcludeMaterialRules("#chk-cal-recipe-material-exclude")
+                : [],
             useNewbieEquip: $("#chk-banquet-newbie-equip").length
                 ? $("#chk-banquet-newbie-equip").prop("checked")
                 : (typeof window.getBanquetNewbieEquipEnabled === 'function' && !!window.getBanquetNewbieEquipEnabled()),
@@ -1218,16 +1220,8 @@ var BanquetOptimizer = (function() {
                     // 过滤调料
                     if (_cachedConfig.recipeCondiment.length > 0 && _cachedConfig.recipeCondiment.indexOf(rd.condiment) < 0) continue;
                     // 过滤排除食材
-                    if (_cachedConfig.excludeMaterials.length > 0 && rd.materials) {
-                        var matExcluded = false;
-                        for (var ei = 0; ei < rd.materials.length; ei++) {
-                            if (_cachedConfig.excludeMaterials.indexOf(rd.materials[ei].material.toString()) >= 0) {
-                                matExcluded = true;
-                                break;
-                            }
-                        }
-                        if (matExcluded) continue;
-                    }
+                    if (typeof window.isRecipeExcludedByMaterialRules === 'function'
+                        && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                     menus.push(rd);
                     _recipeMap[rd.recipeId] = rd;
                 }
