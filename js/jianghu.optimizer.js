@@ -132,7 +132,12 @@ var JianghuOptimizer = (function() {
         '卷帘大将': { normal: 98880, special: 123600 },
         '猪猪男孩': { normal: 91720, special: 114650 },
         '白马王子': { normal: 57600, special: 72000 },
-        '御弟哥哥': { normal: 82456, special: 103070 }
+        '御弟哥哥': { normal: 82456, special: 103070 },
+        '侦探规则': { normal: 68200, special: 68200 },
+        '锦毛鼠规则': { normal: 74350, special: 74350 },
+        '报童特规则': { normal: 76050, special: 76050 },
+        '公孙策特规则': { normal: 69580, special: 69580 },
+        '杰克特规则': { normal: 65920, special: 65920 }
     };
 
     // 贤客楼：5档分数，按高到低存储（5档 -> 1档）
@@ -158,6 +163,18 @@ var JianghuOptimizer = (function() {
      */
     function _findTierScoreKey(title1, title2) {
         if (!title1) return null;
+
+        // 新江湖帖规则标题做完全匹配
+        var fixedJianghuTitleMap = {
+            '江湖帖锦毛鼠特规则 - 锦毛鼠': '锦毛鼠规则',
+            '江湖帖报童特规则 - 报童': '报童特规则',
+            '江湖帖公孙策特规则 - 公孙策': '公孙策特规则',
+            '江湖帖侦探特规则 - 侦探': '侦探规则',
+            '江湖帖杰克特规则 - 杰克': '杰克特规则'
+        };
+        if (fixedJianghuTitleMap[title1]) {
+            return fixedJianghuTitleMap[title1];
+        }
         
         // 江湖帖规则标题格式：江湖帖 贵客名 [特]
         // 例如："江湖帖 铁拐李"、"江湖帖 何仙姑 特"
