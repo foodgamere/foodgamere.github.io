@@ -2533,8 +2533,8 @@ var GuestRateCalculator = (function($) {
                     } else {
                         // 非 PerRank 类型
                         var desc = source.desc || "";
-                        // 从描述中提取"稀有客人赠礼数量XX%"中的百分比
-                        var percentMatch = desc.match(/稀有客人赠礼数量(\d+)%/);
+                        // 从描述中提取"稀有客人赠礼数量XX%"或"贵客赠礼数量XX%"中的百分比
+                        var percentMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%/);
                         var basePercent = percentMatch ? parseInt(percentMatch[1]) : 0;
                         var multiplier = (skill.value || 100) / 100;
                         var critIncrease = basePercent * multiplier;
@@ -3015,7 +3015,7 @@ var GuestRateCalculator = (function($) {
                         result.skillValues.crit += basePercent * 3;
                     }
                 } else {
-                    var percentMatch = desc.match(/稀有客人赠礼数量(\d+)%/);
+                    var percentMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%/);
                     if (percentMatch) {
                         var basePercent = parseInt(percentMatch[1]);
                         var multiplier = (skill.value || 100) / 100;

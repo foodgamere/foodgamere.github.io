@@ -833,7 +833,7 @@ var OneClickQuery = (function($) {
                 
             case 'GuestDropCount':
                 result.hasCritSkill = true;
-                var percentMatch = desc.match(/稀有客人赠礼数量(\d+)%/);
+                var percentMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%/);
                 if (percentMatch) {
                     var basePercent = parseInt(percentMatch[1]);
                     var multiplier = (skill.value || 100) / 100;
