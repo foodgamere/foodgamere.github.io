@@ -22,6 +22,7 @@ import hashlib
 import os
 import posixpath
 import re
+import ssl
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -32,15 +33,26 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
+try:
+    import certifi
+except ImportError:  # pragma: no cover
+    certifi = None
+
 
 DEFAULT_BASE_URL = "https://h5.baochaojianghu.com/"
 DEFAULT_TIMEOUT = 30
 USER_AGENT = "Mozilla/5.0 (compatible; foodgame-local-image-sync/1.0)"
 
 
+def build_ssl_context() -> ssl.SSLContext:
+    if certifi is not None:
+        return ssl.create_default_context(cafile=certifi.where())
+    return ssl.create_default_context()
+
+
 def fetch_bytes(url: str, timeout: int) -> tuple[bytes, str]:
     request = Request(url, headers={"User-Agent": USER_AGENT})
-    with urlopen(request, timeout=timeout) as response:
+    with urlopen(request, timeout=timeout, context=build_ssl_context()) as response:
         content_type = response.headers.get("Content-Type", "")
         return response.read(), content_type
 
@@ -201,6 +213,30 @@ def download_jobs(jobs: Iterable[DownloadJob], timeout: int, dry_run: bool) -> t
     return downloaded, skipped
 
 
+def prune_managed_files(root_dir: Path, keep_files: Iterable[Path], dry_run: bool) -> int:
+    if not root_dir.exists():
+        return 0
+
+    keep_rel_paths = {path.relative_to(root_dir) for path in keep_files}
+    removed = 0
+
+    for path in sorted(root_dir.rglob("*")):
+        if not path.is_file() or path.name == ".DS_Store":
+            continue
+        rel_path = path.relative_to(root_dir)
+        if rel_path in keep_rel_paths:
+            continue
+
+        if dry_run:
+            print(f"[dry-run] remove: {path}")
+        else:
+            path.unlink()
+            print(f"removed: {path}")
+        removed += 1
+
+    return removed
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync remote h5 image.css and image assets into this project.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Remote site root URL.")
@@ -208,6 +244,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--css-image-dir", default="css/images", help="Local directory for CSS sprite images.")
     parser.add_argument("--page-image-dir", default="images", help="Local directory for page-level /images assets.")
     parser.add_argument("--skip-page-assets", action="store_true", help="Do not sync homepage /images assets.")
+    parser.add_argument("--prune-css-images", action="store_true", help="Remove local CSS images that are no longer referenced remotely.")
     parser.add_argument("--dry-run", action="store_true", help="Preview downloads without writing files.")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="HTTP timeout in seconds.")
     return parser.parse_args()
@@ -247,6 +284,9 @@ def main() -> int:
 
     css_downloaded, css_skipped = download_jobs(css_jobs, args.timeout, args.dry_run)
     page_downloaded, page_skipped = download_jobs(page_jobs, args.timeout, args.dry_run)
+    css_removed = 0
+    if args.prune_css_images:
+        css_removed = prune_managed_files(css_images_dir, (job.local_path for job in css_jobs), args.dry_run)
 
     css_bytes = rewritten_css.encode("utf-8")
     if args.dry_run:
@@ -259,8 +299,8 @@ def main() -> int:
         print(("updated" if changed else "unchanged") + f": {css_out}")
 
     print(
-        "done: css images updated={}, skipped={}; page images updated={}, skipped={}".format(
-            css_downloaded, css_skipped, page_downloaded, page_skipped
+        "done: css images updated={}, skipped={}, removed={}; page images updated={}, skipped={}".format(
+            css_downloaded, css_skipped, css_removed, page_downloaded, page_skipped
         )
     )
     return 0
