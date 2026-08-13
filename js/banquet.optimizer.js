@@ -3,82 +3,79 @@
  * 
  * ==================== 算法总体架构 ====================
  * 
- * 核心思路：先选菜谱，再选厨师（厨师排名只有在选择了菜谱后才准确）
- * 全程纯内存计算，不触碰DOM，通过 _simState 模拟状态进行搜索。
- * 
- * === 第一阶段：菜谱优先初始化 ===
- * 1. 意图分析（_analyzeIntents）：
- *    - 分析每个贵客每个厨师位置的意图列表
- *    - 识别 Order 位置指定意图（从指定位置取种子菜谱）
- *    - 识别 CreateIntent 链式意图（先放触发菜，再从加成位置取种子）
- *    - 跳过纯饱食度意图（SatietyChange/SatietyChangePercent/SetSatietyValue）
- *    - 结果缓存在 _intentCache 和 _recipeDependentIntentCache
- * 
- * 2. 协同种子生成（_buildSynergyPairs）：
- *    - 预计算厨师-菜谱协同加成对（售价/基础加成类技能匹配）
- *    - 每个贵客生成 top协同对 × 位置数 的候选方案
- *    - 与菜谱优先种子合并，取top5候选
- * 
- * 3. 菜谱排名（_fastGetRecipeRanking）三阶段：
- *    - Phase1：固定intentAdds粗排全部菜谱（极快）→ top50
- *    - Phase2：逐候选重算intentAdds+partialRecipeAdds精排（仅对有菜谱依赖意图的位置）→ top preFilterTop
- *    - Phase3：精确rule分数计算（含饱食度等全局效果）
- *    - Phase2动态候选数：topK<=3时精排top8，否则精排top15
- * 
- * 4. 种子精调（_quickRefineFast）：
- *    - lightMode=true/1：1轮只调菜谱（最快）
- *    - lightMode=N（数字>1）：N轮含厨师调整（中等）
- *    - lightMode=false：CONFIG.refineIter轮完整精调（最深）
- *    - 自适应：菜谱总数>800用轻量，否则完整
- * 
+ * 核心思路：在纯内存的 _simState 上进行多起点局部搜索；先确定菜谱，
+ * 再按已选菜谱评价厨师。优化过程中不写 DOM，最后才写回页面。
+ *
+ * === 输入、约束和计分 ===
+ * 1. init() 从 calCustomRule.rules 与页面筛选项建立厨师/菜谱索引：
+ *    - 可按贵客过滤；单贵客模式会下调部分搜索预算。
+ *    - 菜谱会按拥有状态、稀有度和技法预过滤；宴会不使用厨神大赛的排除食材规则。
+ *    - 搜索中菜谱全局不重复，厨师在已处理位置中不重复；宴会不存在跨菜谱
+ *      食材配额，每道菜均按当前 rule 的完整食材计算份数，并遵守 DisableMultiCookbook。
+ *    - 可选的新手/中级奖池厨具会参与菜谱排序和最终自动搭配。
+ * 2. _calcRuleScore() 使用与页面相同的厨师属性、Partial 加成、意图加成、
+ *    菜谱得分、活动加成、规则倍率/幂/固定加分及饱食度计算；搜索目标是
+ *    所有启用贵客的总分。
+ *
+ * === 第一阶段：候选初始化 ===
+ * 3. 意图分析（_analyzeIntents）识别 Order 位置意图、CreateIntent 链、
+ *    下道菜、三道技法、调料/稀有度/品阶/技法偏好等；纯饱食度意图不作为
+ *    种子依据。结果按类型缓存，减少排名时的重复解析。
+ * 4. 每个贵客生成四类候选，并补全其他位置及其他贵客后做轻量精调：
+ *    - 菜谱优先种子：意图确定种子格和填充顺序，枚举 top recipeSeedK 菜谱
+ *      与每菜 top chefPerSeed 厨师。
+ *    - 厨师-菜谱协同种子（_buildSynergyPairs）：售价/基础加成等技能协同。
+ *    - 售价光环厨师种子：最多前三个光环厨师，逐位置尝试。
+ *    - 多技法组合种子：存在至少两个“三道某技法”意图时，最多尝试四组双/三技法组合。
+ *    - 此外，页面当前方案会按当前筛选和份数规则规范化后作为保底种子参与搜索。
+ * 5. 菜谱排名（_fastGetRecipeRanking）分三步：
+ *    - Phase 1：固定 Partial/意图加成粗排所有可用菜谱，常规保留前 80 个；
+ *      强制深度搜索不在此阶段截断候选。
+ *    - Phase 2：仅在该位置存在菜谱依赖意图时，重算 intentAdds 与
+ *      partialRecipeAdds；常规 topK <= 3 精排前 8 个、其余前 15 个，菜谱属性
+ *      意图分别扩大到前 56 个、前 80 个；强制深度搜索则精排全部预筛候选。
+ *    - Phase 3：逐候选写入模拟状态，计算精确的当前贵客或全局分数。
+ * 6. 初始化种子在同一厨师的未填菜位保留小型束搜索分支，再按分数排序并保留
+ *    initKeepTop 个。首个候选完整精调，其他
+ *    候选按菜谱总数自适应精调（总数 > 800 时轻量）；“强制深度搜索”开启时
+ *    忽略该降级。达到目标分且饱食度合格可提前结束。
+ *
  * === 第二阶段：多起点搜索 ===
- * 5. 种子去重：精确去重（分数完全相同才合并）
- *    - 模糊去重（1%阈值）会导致关键种子被吞掉，已验证回退
- * 
- * 6. 每个种子的搜索流程：
- *    a. 爬山（_runClimbingPhase）：最多5轮，每轮尝试厨师替换+菜谱替换+菜谱交换
- *       - 厨师替换：遍历每个位置，尝试所有可用厨师
- *       - 菜谱替换：遍历每个位置，尝试top菜谱
- *       - 菜谱交换（_climbRecipeSwap）：尝试任意两个位置的菜谱互换
- *       - 收敛即停
- *    b. 爬山后跳过检查：
- *       - 爬山无改进且 < 全局最佳90% → 跳过深度搜索
- *       - 即使有改进，< 全局最佳88% → 也跳过（差距太大）
- *       - 90%-95%之间的"边界种子"：轻量深度搜索（1轮跨贵客，跳过重建）
- *    c. 跨贵客重分配（_crossGuestReassign）：最多2轮
- *       - 方案A：清空目标贵客，用意图感知重新填充 + 精调
- *         少菜谱(<=800)用完整精调，多菜谱用轻量
- *       - 方案B：对目标贵客每个位置，尝试top5种子菜谱替换 + 精调
- *         少菜谱用2轮精调，多菜谱用轻量
- *       - 后补偿：如果跨贵客有改进，做一次完整精调弥补轻量模式的精度损失
- *    d. 整贵客重建（_fullGuestRebuild）：
- *       - 仅在跨贵客有改进时才执行（条件执行）
- *       - 厨师候选数限制为5（原10）
- *    e. 最终爬山+交换：
- *       - 仅在前面阶段有改进时执行（条件执行）
- * 
- * 7. 种子间优化：
- *    - 收敛提前终止：如果某种子最终状态与之前某种子完全相同，跳过剩余种子
- *    - 分数过低跳过：仅跳过显著落后的种子，避免误杀异构高分组合
- * 
- * === 关键参数（CONFIG） ===
- * - recipeSeedK: 6     种子菜谱数
- * - chefPerSeed: 5     每种子试几个厨师
- * - recipeTopN: 5      菜谱排名取前N（穷举搜索用）
- * - maxRounds: 5       爬山轮数
- * - refineIter: 5      精调迭代轮数
- * - preFilterTop: 50   预过滤候选数
- * 
- * === 自适应阈值 ===
- * - 菜谱总数 > 800：跨贵客用轻量精调（方案A: true, 方案B: true）
- * - 菜谱总数 <= 800：跨贵客用深度精调（方案A: false完整, 方案B: 2轮）
- * - 种子初始化精调同理（>800轻量，<=800完整）
- * 
- * 
- * === 分数提升的主要来源 ===
- * - 跨贵客重分配：把好厨师/菜谱从一个贵客移到另一个
- * - 菜谱交换：同贵客内不同位置的菜谱互换
- * - 意图感知种子选择：利用意图链条找到高分起点
+ * 7. 种子按完整状态签名精确去重，不以分数相同为去重条件。常规模式下，起始分
+ *    低于当前全局最佳 85% 的非首种子直接跳过；强制深度搜索会保留这些种子。
+ * 8. 每个未跳过种子先执行 _runClimbingPhase，最多 maxRounds 轮，任一步有
+ *    改进才继续下一轮。每轮依次尝试：
+ *    - 厨师替换、厨师位置交换、单菜替换、菜谱位置交换；
+ *    - 固定厨师的整套菜谱重建、同组三厨师换位后重建；
+ *    - 厨师与菜谱的联合替换。
+ * 9. 爬山后剪枝：非首种子在“无改进且 < 86%”或“无论是否改进均 < 83%”
+ *    当前全局最佳时停止深搜；83%-92% 的边界种子只做一轮跨贵客搜索，并跳过
+ *    整贵客重建和最终爬山。
+ * 10. 常规种子最多进行两轮跨贵客重分配（_crossGuestReassign）：
+ *     - 方案 A 清空一个贵客，以意图感知贪心方式重新填满。
+ *     - 方案 B 清空其中一个位置，枚举该位置前五个种子菜谱并重新选厨师。
+ *     - 菜谱总数 > 800 时使用轻量精调；否则方案 A 完整精调、方案 B 两轮精调。
+ *       “强制深度搜索”开启时始终采用后者并保留完整搜索预算；有改进后始终补一次完整精调。
+ * 11. 整贵客重建（_fullGuestRebuild）在常规模式下仅于跨贵客阶段有改进时执行；
+ *     强制深度搜索会直接启用该分支以及逐槽候选搜索。常规模式首次空跑后，会在
+ *     本次优化余下阶段禁用整贵客重建。
+ * 12. 末尾总会再尝试一次菜谱交换；只有该交换形成新解才再跑一轮完整爬山。
+ *     若多个种子收敛到相同完整状态，则提前结束剩余种子搜索。
+ *
+ * === 收尾与非主路径 ===
+ * 13. 收尾阶段顺序修复空位/技法不合格菜谱、重复菜谱、缺失厨师，并在启用时比较
+ *     奖池厨具搭配；最后以饱食度偏差优先、分数次优的规则修复饱食度。若饱食度
+ *     未达标，结果不会写回页面。
+ * 14. 最优 _simState 按 setCustomChef→setCustomEquip→setCustomRecipe 顺序写回后调用
+ *     calCustomResults() 取得页面真实分数，并与内存分记录比对。
+ * 15. 多起点搜索完成后执行有界扰动重启，只接受严格更优解；逐槽候选搜索只在
+ *     强制深度模式启用。
+ *
+ * === 主要默认参数 ===
+ * - recipeSeedK: 6，chefPerSeed: 5，initKeepTop: 18
+ * - maxRounds: 5，refineIter: 5，preFilterTop: 80
+ * - chefClimbTry/jointChefTry/recipeClimbTry: 16
+ * - fixedChefRecipeSeedTop: 6，fixedChefRecipeSlotKeepTop: 7
  */
 
 var BanquetOptimizer = (function() {
@@ -106,12 +103,15 @@ var BanquetOptimizer = (function() {
     var CONFIG = {
         recipeSeedK: 6,       // 种子菜谱数
         chefPerSeed: 5,      // 每种子试几个厨师
+        initRecipeBeamWidth: 3, // 初始化时同一厨师三道菜保留的分支数
+        initRecipeBeamChoices: 3, // 束搜索中每个菜位展开的候选数
         recipeTopN: 5,       // 菜谱排名取前N（穷举搜索用）
         maxRounds: 5,        // 爬山轮数
         refineIter: 5,       // 精调迭代轮数
         perturbRounds: 30,   // 扰动重建轮数（随机扰动补充用）
         perturbPositions: 2, // 每轮扰动位置数
-        preFilterTop: 50,    // 预过滤候选数
+        restartRounds: 8,    // 多起点搜索后用于跳出局部最优的受控重启次数
+        preFilterTop: 80,    // 常规模式预过滤候选数
         initKeepTop: 18,     // 初始化后保留多少个候选进入深搜
         chefClimbTry: 16,    // 厨师爬山最多尝试的候选厨师数
         jointChefTry: 16,    // 联合替换最多尝试的候选厨师数
@@ -120,7 +120,7 @@ var BanquetOptimizer = (function() {
         chefSearchAuraTop: 6, // 厨师搜索时强制混入的光环候选数
         chefSearchRarityTop: 10, // 厨师搜索时强制混入的高稀有度候选数
         rebuildFirstChefTop: 6, // 整贵客重建时尝试的起手厨师数
-        enableFullGuestRebuild: false, // 整贵客重建在最新日志里持续空跑，默认关闭
+        enableFullGuestRebuild: false, // 常规搜索关闭；强制深度搜索会启用
         recipeClimbTry: 16, // 单菜爬山时尝试的候选菜谱数
         fixedChefRecipeSeedTop: 6, // 固定厨师重建时每个种子位尝试的菜谱数
         fixedChefRecipeSlotKeepTop: 7, // 固定厨师重建时每个位置保留的候选菜谱组合数
@@ -815,7 +815,7 @@ var BanquetOptimizer = (function() {
             _simState = normalizedState;
             for (var ri = 0; ri < _rules.length; ri++) {
                 if (!_shouldProcessRule(ri)) continue;
-                _calcRuleScore(ri, true);
+                _calcRuleScore(ri, true, true);
             }
             payload.satiety = _getSatietySummary(normalizedState);
             payload.state = _summarizeState(normalizedState);
@@ -839,9 +839,13 @@ var BanquetOptimizer = (function() {
                 var slot = state[ri][ci];
                 var recipeIds = [];
                 for (var reci = 0; reci < slot.recipes.length; reci++) {
-                    recipeIds.push(slot.recipes[reci] && slot.recipes[reci].data ? slot.recipes[reci].data.recipeId : 0);
+                    var recipe = slot.recipes[reci];
+                    recipeIds.push(recipe && recipe.data
+                        ? recipe.data.recipeId + '@' + (recipe.quantity || 0)
+                        : 0);
                 }
-                parts.push([ri, ci, slot.chefId || 0].concat(recipeIds).join(':'));
+                var equipId = slot.equipObj && slot.equipObj.equipId ? slot.equipObj.equipId : 0;
+                parts.push([ri, ci, slot.chefId || 0, equipId].concat(recipeIds).join(':'));
             }
         }
         return parts.join('|');
@@ -901,7 +905,8 @@ var BanquetOptimizer = (function() {
             if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < state[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
-                    if (ri === excludeRuleIndex && ci === excludeChefIndex && reci === excludeRecipeIndex) continue;
+                    if (ri === excludeRuleIndex && ci === excludeChefIndex
+                        && (excludeRecipeIndex < 0 || reci === excludeRecipeIndex)) continue;
                     var rec = state[ri][ci].recipes[reci];
                     if (rec && rec.data && rec.data.recipeId) {
                         used[rec.data.recipeId] = true;
@@ -1148,21 +1153,18 @@ var BanquetOptimizer = (function() {
         _cachedConfig = {
             useGot: $("#chk-cal-got").prop("checked"),
             useEquip: $("#chk-cal-use-equip").prop("checked"),
-            useAmber: $("#chk-cal-use-amber").prop("checked"),
-            maxDisk: $("#chk-cal-max-disk").prop("checked"),
             recipeRarity: $("#chk-cal-recipe-rarity").val() || [],
             recipeSkill: $("#chk-cal-recipe-skill").val() || [],
             multipleSkill: $("#chk-cal-recipe-multiple-skill").prop("checked"),
-            recipeCondiment: $("#chk-cal-recipe-condiment").val() || [],
-            excludeMaterialRules: typeof window.getExcludeMaterialRules === 'function'
-                ? window.getExcludeMaterialRules("#chk-cal-recipe-material-exclude")
-                : [],
             useNewbieEquip: $("#chk-banquet-newbie-equip").length
                 ? $("#chk-banquet-newbie-equip").prop("checked")
                 : (typeof window.getBanquetNewbieEquipEnabled === 'function' && !!window.getBanquetNewbieEquipEnabled()),
             useIntermediateEquip: $("#chk-banquet-intermediate-equip").length
                 ? $("#chk-banquet-intermediate-equip").prop("checked")
-                : (typeof window.getBanquetIntermediateEquipEnabled === 'function' && !!window.getBanquetIntermediateEquipEnabled())
+                : (typeof window.getBanquetIntermediateEquipEnabled === 'function' && !!window.getBanquetIntermediateEquipEnabled()),
+            forceDeepSearch: $("#chk-banquet-force-deep-search").length
+                ? $("#chk-banquet-force-deep-search").prop("checked")
+                : (typeof window.getBanquetForceDeepSearchEnabled === 'function' && !!window.getBanquetForceDeepSearchEnabled())
         };
 
         _newbieEquipEnabled = !!_cachedConfig.useNewbieEquip;
@@ -1176,7 +1178,6 @@ var BanquetOptimizer = (function() {
         _recipeDependentIntentCache = {};  // 清空菜谱依赖意图缓存
         _threeSkillIntentCache = {};  // 清空三道技法意图缓存
         _nextDishIntentCache = {};  // 清空下道料理意图缓存
-        _condimentIntentCache = {};  // 清空调料加成缓存
         _rarityRankIntentCache = {};  // 清空稀有度/品阶加成缓存
         _cookSkillIntentCache = {};  // 清空技法加成缓存
         _synergyCache = {};  // 清空协同缓存
@@ -1217,11 +1218,6 @@ var BanquetOptimizer = (function() {
                         }
                         if (!skillPass) continue;
                     }
-                    // 过滤调料
-                    if (_cachedConfig.recipeCondiment.length > 0 && _cachedConfig.recipeCondiment.indexOf(rd.condiment) < 0) continue;
-                    // 过滤排除食材
-                    if (typeof window.isRecipeExcludedByMaterialRules === 'function'
-                        && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                     menus.push(rd);
                     _recipeMap[rd.recipeId] = rd;
                 }
@@ -1278,7 +1274,30 @@ var BanquetOptimizer = (function() {
 
     function _getRuntimeConfigValue(key) {
         var baseValue = CONFIG[key];
-        if (_isSingleGuestMode()) {
+        if (_cachedConfig.forceDeepSearch) {
+            var forceDeepOverrides = {
+                recipeSeedK: 8,
+                chefPerSeed: 6,
+                initRecipeBeamWidth: 6,
+                initRecipeBeamChoices: 5,
+                recipeTopN: 8,
+                maxRounds: 6,
+                refineIter: 6,
+                initKeepTop: 24,
+                chefClimbTry: 24,
+                jointChefTry: 24,
+                recipeClimbTry: 24,
+                fixedChefRecipeSeedTop: 8,
+                fixedChefRecipeSlotKeepTop: 9,
+                chefPermutationTry: 2,
+                restartRounds: 16
+            };
+            if (forceDeepOverrides.hasOwnProperty(key)) {
+                baseValue = Math.max(baseValue, forceDeepOverrides[key]);
+            }
+        }
+        // 强制深度搜索应保留完整搜索预算，而不只是取消菜谱数量导致的轻量精调。
+        if (_isSingleGuestMode() && !_cachedConfig.forceDeepSearch) {
             var singleGuestOverrides = {
             recipeSeedK: 5,
             chefPerSeed: 4,
@@ -1296,7 +1315,7 @@ var BanquetOptimizer = (function() {
             baseValue = singleGuestOverrides.hasOwnProperty(key) ? singleGuestOverrides[key] : baseValue;
         }
 
-        if (_activeClimbRound >= 1) {
+        if (!_cachedConfig.forceDeepSearch && _activeClimbRound >= 1) {
             var laterRoundOverrides = {
                 chefClimbTry: 12,
                 jointChefTry: 10,
@@ -1310,7 +1329,7 @@ var BanquetOptimizer = (function() {
             }
         }
 
-        if (_activeClimbRound >= 2) {
+        if (!_cachedConfig.forceDeepSearch && _activeClimbRound >= 2) {
             var deepRoundOverrides = {
                 chefClimbTry: 10,
                 jointChefTry: 8,
@@ -1348,6 +1367,79 @@ var BanquetOptimizer = (function() {
         }
     }
 
+    /**
+     * 将页面当前已选方案转换为一个符合当前搜索配置的内存种子。
+     * 初始化候选不应只依赖重新拼装的方案，否则页面上已有的高分组合
+     * 可能完全没有机会进入多起点搜索。
+     */
+    function _buildCurrentPageSeed() {
+        if (typeof calCustomRule === 'undefined' || !calCustomRule || !calCustomRule.rules) {
+            return null;
+        }
+
+        var savedState = _simState;
+        _initSimState();
+        var hasSelection = false;
+
+        for (var ri = 0; ri < _rules.length; ri++) {
+            var rule = _rules[ri];
+            var custom = rule && rule.custom;
+            if (!custom) continue;
+
+            for (var ci = 0; ci < _simState[ri].length; ci++) {
+                var pageSlot = custom[ci];
+                if (!pageSlot) continue;
+
+                var pageChef = pageSlot.chef;
+                var chefId = pageChef && pageChef.chefId;
+                var chefAllowed = true;
+                if (chefId && _cachedConfig.useGot && pageChef.got === false && !isAllUltimateMode) {
+                    chefAllowed = false;
+                }
+                if (chefId && chefAllowed) {
+                    _simSetChef(ri, ci, chefId);
+                    if (!_simState[ri][ci].chefId) continue;
+                    // 遗玉不参与宴会搜索，始终使用规则中该厨师自带的盘和遗玉。
+                    // 页面已有厨具则作为保底种子的一部分保留，不受“使用厨具”开关影响。
+                    if (pageSlot.equip && pageSlot.equip.equipId) {
+                        var pageEquip = getEquipInfo(pageSlot.equip.equipId, rule.equips || []);
+                        if (pageEquip) {
+                            _simState[ri][ci].equipObj = JSON.parse(JSON.stringify(pageEquip));
+                            _applyChefData(ri);
+                        }
+                    }
+                    hasSelection = true;
+                }
+
+                // 菜谱必须依附于有效厨师；空槽或被筛选掉的厨师不能生成伪页面种子。
+                if (!_simState[ri][ci].chefId) continue;
+
+                for (var reci = 0; reci < 3; reci++) {
+                    var pageRecipe = pageSlot.recipes && pageSlot.recipes[reci];
+                    var pageData = pageRecipe && pageRecipe.data ? pageRecipe.data : pageRecipe;
+                    var recipeId = pageData && pageData.recipeId;
+                    // 只接纳当前筛选后菜谱池中的菜谱，避免页面旧状态绕过筛选条件。
+                    if (!recipeId || !_recipeMap[recipeId]) continue;
+                    _simSetRecipe(ri, ci, reci, recipeId);
+                    var seedRecipe = _simState[ri][ci].recipes[reci];
+                    if (seedRecipe.data) {
+                        // 饱食度由菜谱星级和规则加成决定，与制作份数无关；保留
+                        // 页面手动降低过的份数，才能让保底种子与页面实际分数一致。
+                        var pageQuantity = Number(pageRecipe && pageRecipe.quantity);
+                        if (isFinite(pageQuantity) && pageQuantity >= 0) {
+                            seedRecipe.quantity = pageQuantity;
+                        }
+                        hasSelection = true;
+                    }
+                }
+            }
+        }
+
+        var seed = hasSelection ? _cloneSimState(_simState) : null;
+        _simState = savedState;
+        return seed;
+    }
+
     function _cloneSimState(state) {
         if (!state) return null;
         var clone = [];
@@ -1360,9 +1452,9 @@ var BanquetOptimizer = (function() {
                     chefObj: s.chefObj ? JSON.parse(JSON.stringify(s.chefObj)) : null,
                     equipObj: s.equipObj ? JSON.parse(JSON.stringify(s.equipObj)) : {},
                     recipes: [
-                        {data: s.recipes[0].data, quantity: s.recipes[0].quantity, max: s.recipes[0].max},
-                        {data: s.recipes[1].data, quantity: s.recipes[1].quantity, max: s.recipes[1].max},
-                        {data: s.recipes[2].data, quantity: s.recipes[2].quantity, max: s.recipes[2].max}
+                        {data: s.recipes[0].data, quantity: s.recipes[0].quantity, max: s.recipes[0].max, satiety: s.recipes[0].satiety || 0},
+                        {data: s.recipes[1].data, quantity: s.recipes[1].quantity, max: s.recipes[1].max, satiety: s.recipes[1].satiety || 0},
+                        {data: s.recipes[2].data, quantity: s.recipes[2].quantity, max: s.recipes[2].max, satiety: s.recipes[2].satiety || 0}
                     ]
                 });
             }
@@ -1491,7 +1583,7 @@ var BanquetOptimizer = (function() {
         return currentEquipId === _getRecipeSelectionEquipId(selection);
     }
 
-    function _applyRecipeSelection(ruleIndex, chefIndex, recipeIndex, selection, preRemainMaterials) {
+    function _applyRecipeSelection(ruleIndex, chefIndex, recipeIndex, selection) {
         if (!selection || !selection.recipeId) return false;
         var slot = _simState[ruleIndex][chefIndex];
         if (!slot) return false;
@@ -1500,7 +1592,7 @@ var BanquetOptimizer = (function() {
             _applyChefData(ruleIndex);
             _refreshRecipeQuantitiesForSlot(ruleIndex, chefIndex);
         }
-        _simSetRecipe(ruleIndex, chefIndex, recipeIndex, selection.recipeId, preRemainMaterials);
+        _simSetRecipe(ruleIndex, chefIndex, recipeIndex, selection.recipeId);
         return true;
     }
 
@@ -1533,12 +1625,10 @@ var BanquetOptimizer = (function() {
         for (var reci = 0; reci < slot.recipes.length; reci++) {
             var rec = slot.recipes[reci];
             if (!rec || !rec.data) continue;
-            var remainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, reci);
-            var newMax = getRecipeQuantity(rec.data, remainMaterials, rule, slot.chefObj);
+            var newMax = getRecipeQuantity(rec.data, rule.materials, rule, slot.chefObj);
             if (rule.DisableMultiCookbook) newMax = Math.min(newMax, 1);
+            rec.quantity = newMax;
             rec.max = newMax;
-            if (rec.quantity > newMax) rec.quantity = newMax;
-            if (newMax > rec.quantity) rec.quantity = newMax;
         }
     }
 
@@ -1642,18 +1732,6 @@ var BanquetOptimizer = (function() {
         slot.chefId = chefId;
         slot.chefObj = JSON.parse(JSON.stringify(srcChef));
         
-        // 处理心法盘等级
-        if (_cachedConfig.maxDisk) {
-            slot.chefObj.disk.level = slot.chefObj.disk.maxLevel;
-        }
-        
-        // 处理遗玉
-        if (!_cachedConfig.useAmber) {
-            for (var ai = 0; ai < slot.chefObj.disk.ambers.length; ai++) {
-                slot.chefObj.disk.ambers[ai].data = null;
-            }
-        }
-        
         // 处理厨具
         if (_cachedConfig.useEquip && srcChef.equipId) {
             slot.equipObj = getEquipInfo(srcChef.equipId, rule.equips) || {};
@@ -1663,14 +1741,14 @@ var BanquetOptimizer = (function() {
         
         // 调用 setDataForChef 计算厨师属性值（这是纯计算函数，不操作DOM）
         _applyChefData(ruleIndex);
+        // 更换厨师会改变技法、厨具和单菜份数上限，已有菜谱必须同步刷新。
+        _refreshRecipeQuantitiesForSlot(ruleIndex, chefIndex);
     }
 
     /**
      * 在模拟状态中设置菜谱（纯内存）
-     * 修复：计算份数时扣除同rule内其他已选菜谱的食材消耗，匹配系统setCustomRecipe逻辑
-     * preRemainMaterials: 可选，预计算的剩余食材池（避免重复计算）
      */
-    function _simSetRecipe(ruleIndex, chefIndex, recipeIndex, recipeId, preRemainMaterials) {
+    function _simSetRecipe(ruleIndex, chefIndex, recipeIndex, recipeId) {
         var slot = _simState[ruleIndex][chefIndex];
         if (!recipeId) {
             slot.recipes[recipeIndex] = {data: null, quantity: 0, max: 0};
@@ -1695,38 +1773,11 @@ var BanquetOptimizer = (function() {
         
         var rule = _rules[ruleIndex];
         
-        // 构建扣除其他已选菜谱食材后的剩余食材池（匹配setCustomRecipe逻辑）
-        var remainMaterials;
-        if (preRemainMaterials) {
-            remainMaterials = preRemainMaterials;
-        } else {
-            remainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
-        }
-        
-        // 用剩余食材计算份数
-        var qty = getRecipeQuantity(recipeData, remainMaterials, rule, slot.chefObj);
+        // 宴会没有跨菜谱食材配额，每道菜独立使用当前贵客的完整食材池。
+        var qty = getRecipeQuantity(recipeData, rule.materials, rule, slot.chefObj);
         if (rule.DisableMultiCookbook) qty = Math.min(qty, 1);
         
         slot.recipes[recipeIndex] = {data: recipeData, quantity: qty, max: qty};
-    }
-
-    /**
-     * 计算某个rule中排除指定位置后的剩余食材
-     */
-    function _calcRemainMaterials(ruleIndex, excludeChef, excludeRecipe) {
-        var rule = _rules[ruleIndex];
-        var remainMaterials = JSON.parse(JSON.stringify(rule.materials));
-        var ruleState = _simState[ruleIndex];
-        for (var ci = 0; ci < ruleState.length; ci++) {
-            for (var ri = 0; ri < 3; ri++) {
-                if (ci === excludeChef && ri === excludeRecipe) continue;
-                var rec = ruleState[ci].recipes[ri];
-                if (rec.data && rec.quantity > 0) {
-                    updateMaterialsData(remainMaterials, rec, rec.quantity, ruleState[ci].chefObj);
-                }
-            }
-        }
-        return remainMaterials;
     }
 
     /**
@@ -1799,31 +1850,38 @@ var BanquetOptimizer = (function() {
      * 计算单个rule的分数（完全匹配calCustomResults逻辑）
      * 参数 applyChef: 是否重新计算厨师属性
      */
-    function _calcRuleScore(ruleIndex, applyChef) {
+    function _calcRuleScore(ruleIndex, applyChef, updateSatietyCache) {
         var rule = _rules[ruleIndex];
         var ruleState = _simState[ruleIndex];
         
         if (applyChef !== false) _applyChefData(ruleIndex);
         
-        // 匹配calCustomResults — setDataForChef后重新计算max并限制quantity
-        for (var ci = 0; ci < ruleState.length; ci++) {
-            for (var reci = 0; reci < 3; reci++) {
-                var rec = ruleState[ci].recipes[reci];
-                if (rec.data) {
-                    var recipeMax = getRecipeQuantity(rec.data, rule.materials, rule, ruleState[ci].chefObj);
-                    if (rule.DisableMultiCookbook) recipeMax = Math.min(recipeMax, 1);
-                    rec.max = recipeMax;
-                    if (rec.quantity > recipeMax) rec.quantity = recipeMax;
-                }
-            }
-        }
-        
+        // 页面计分时 max 按 rule 全量食材展示，quantity 保留搜索阶段计算的实际份数。
+        // 构造只读计分视图，避免候选评分回写模拟状态。
+        var scoreRecipesByChef = [];
         var customArr = [];
         for (var ci = 0; ci < ruleState.length; ci++) {
+            var scoreRecipes = [];
+            for (var reci = 0; reci < 3; reci++) {
+                var sourceRec = ruleState[ci].recipes[reci];
+                if (!sourceRec || !sourceRec.data) {
+                    scoreRecipes.push({data: null, quantity: 0, max: 0, satiety: 0});
+                    continue;
+                }
+                var scoreMax = getRecipeQuantity(sourceRec.data, rule.materials, rule, ruleState[ci].chefObj);
+                if (rule.DisableMultiCookbook) scoreMax = Math.min(scoreMax, 1);
+                scoreRecipes.push({
+                    data: sourceRec.data,
+                    quantity: sourceRec.quantity,
+                    max: scoreMax,
+                    satiety: sourceRec.satiety || 0
+                });
+            }
+            scoreRecipesByChef[ci] = scoreRecipes;
             customArr.push({
                 chef: ruleState[ci].chefObj || {},
                 equip: ruleState[ci].equipObj || {},
-                recipes: ruleState[ci].recipes,
+                recipes: scoreRecipes,
                 condiment: {}
             });
         }
@@ -1833,9 +1891,10 @@ var BanquetOptimizer = (function() {
         
         // 匹配 calCustomResults: u += Math.ceil(+(g.totalScore * (1 + g.data.activityAddition / 100)).toFixed(2))
         var u = 0;
+        var satietyByRecipe = [];
         for (var ci = 0; ci < ruleState.length; ci++) {
             for (var reci = 0; reci < 3; reci++) {
-                var rec = ruleState[ci].recipes[reci];
+                var rec = scoreRecipesByChef[ci][reci];
                 if (rec.data) {
                     var g = getRecipeResult(
                         ruleState[ci].chefObj,
@@ -1854,7 +1913,8 @@ var BanquetOptimizer = (function() {
                     );
                     var actAdd = (g.data && g.data.activityAddition) ? g.data.activityAddition : 0;
                     u += Math.ceil(+(g.totalScore * (1 + actAdd / 100)).toFixed(2));
-                    ruleState[ci].recipes[reci].satiety = g.satiety;
+                    satietyByRecipe[3 * ci + reci] = g.satiety || 0;
+                    if (updateSatietyCache) ruleState[ci].recipes[reci].satiety = g.satiety || 0;
                 }
             }
         }
@@ -1878,8 +1938,8 @@ var BanquetOptimizer = (function() {
             var expected = 3 * (rule.IntentList ? rule.IntentList.length : 3);
             for (var ci = 0; ci < ruleState.length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
-                    if (ruleState[ci].recipes[reci].data) {
-                        satTotal += ruleState[ci].recipes[reci].satiety || 0;
+                    if (scoreRecipesByChef[ci][reci].data) {
+                        satTotal += satietyByRecipe[3 * ci + reci] || 0;
                         satCount++;
                     }
                 }
@@ -1899,6 +1959,7 @@ var BanquetOptimizer = (function() {
     function _fastCalcScore() {
         var totalScore = 0;
         for (var ri = 0; ri < _rules.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             totalScore += _calcRuleScore(ri, true);
         }
         return totalScore;
@@ -1996,6 +2057,7 @@ var BanquetOptimizer = (function() {
         // 收集所有已用厨师
         var usedChefIds = {};
         for (var ri = 0; ri < _simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 if (ri === ruleIndex && ci === chefIndex) continue;
                 if (_simState[ri][ci].chefId) {
@@ -2019,9 +2081,7 @@ var BanquetOptimizer = (function() {
             }
         } else {
             // 有菜谱时，计算每个厨师的得分
-            var savedChefObj = ruleState[chefIndex].chefObj;
-            var savedChefId = ruleState[chefIndex].chefId;
-            var savedEquipObj = ruleState[chefIndex].equipObj;
+            var savedSlot = _cloneSlotState(ruleState[chefIndex]);
             
             var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
             
@@ -2031,7 +2091,8 @@ var BanquetOptimizer = (function() {
                 // 跳过已用厨师（快速排名时不需要评估已用的）
                 if (fastMode && usedChefIds[chef.chefId]) continue;
                 
-                // 临时设置厨师
+                // 每个候选都从同一槽位快照开始，避免上一位厨师重算的份数污染排名。
+                _restoreSlotState(ruleIndex, chefIndex, savedSlot);
                 _simSetChef(ruleIndex, chefIndex, chef.chefId);
                 
                 // 检查技法是否足够
@@ -2062,10 +2123,8 @@ var BanquetOptimizer = (function() {
                 });
             }
             
-            // 恢复原厨师
-            ruleState[chefIndex].chefId = savedChefId;
-            ruleState[chefIndex].chefObj = savedChefObj;
-            ruleState[chefIndex].equipObj = savedEquipObj;
+            // 恢复完整槽位，而非只恢复厨师；菜谱份数同样属于模拟状态。
+            _restoreSlotState(ruleIndex, chefIndex, savedSlot);
             _applyChefData(ruleIndex);
         }
         
@@ -2076,9 +2135,9 @@ var BanquetOptimizer = (function() {
     /**
      * 快速获取菜谱排名（纯内存，替代getCustomRecipesOptions）
      * 优化：三阶段排名
-     *   第一阶段：固定intentAdds粗排（全部菜谱）→ top50
-     *   第二阶段：逐候选重算intentAdds精排（top50）→ top preFilterTop
-     *   第三阶段：精确rule分数计算（top preFilterTop，含饱食度等全局效果）
+     *   第一阶段：固定intentAdds粗排（全部菜谱）→ 常规top80，强制深度模式不截断
+     *   第二阶段：逐候选重算intentAdds精排；复杂意图/深度模式扩大精排候选
+     *   第三阶段：精确rule分数计算（保留候选，含饱食度等全局效果）
      * fastMode=true时只计算当前rule的分数
      * 返回: [{recipeId, score}] 按score降序
      */
@@ -2098,6 +2157,7 @@ var BanquetOptimizer = (function() {
 
         var usedRecipeIds = {};
         for (var ri = 0; ri < _simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
                     if (ri === ruleIndex && ci === chefIndex && reci === recipeIndex) continue;
@@ -2107,12 +2167,12 @@ var BanquetOptimizer = (function() {
             }
         }
 
-        var savedRecipe = slot.recipes[recipeIndex];
-        var savedEquip = slot.equipObj;
-        var candidateN = fastMode ? Math.max((topK || 5) * 3, 12) : Math.max((topK || 5) * 5, 20);
-        var preciseTop = fastMode ? Math.max((topK || 5) * 3, 12) : Math.max((topK || 5) * 4, 16);
+        var savedSlot = _cloneSlotState(slot);
+        var savedEquip = savedSlot.equipObj;
+        var widenAutoPoolSearch = _shouldWidenRecipeSearch(ruleIndex, chefIndex);
+        var candidateN = fastMode ? Math.max((topK || 5) * 3, widenAutoPoolSearch ? 24 : 12) : Math.max((topK || 5) * 5, widenAutoPoolSearch ? 40 : 20);
+        var preciseTop = fastMode ? Math.max((topK || 5) * 3, widenAutoPoolSearch ? 24 : 12) : Math.max((topK || 5) * 4, widenAutoPoolSearch ? 32 : 16);
         var skillTolerance = 200;
-        var preRemainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
         var bareChefForCandidates = slot.chefObj;
 
         _applyChefData(ruleIndex);
@@ -2132,7 +2192,7 @@ var BanquetOptimizer = (function() {
             var maxDeficit = _getRecipeSkillMaxDeficit(bareChefForCandidates, rd);
             if (maxDeficit > skillTolerance) continue;
 
-            var qty = getRecipeQuantity(rd, preRemainMaterials, rule, bareChefForCandidates);
+            var qty = getRecipeQuantity(rd, rule.materials, rule, bareChefForCandidates);
             if (rule.DisableMultiCookbook) qty = Math.min(qty, 1);
 
             var roughScore = 0;
@@ -2164,7 +2224,7 @@ var BanquetOptimizer = (function() {
         }
 
         candidates.sort(function(a, b) { return b.roughScore - a.roughScore; });
-        if (candidates.length > candidateN) candidates.length = candidateN;
+        if (!_cachedConfig.forceDeepSearch && candidates.length > candidateN) candidates.length = candidateN;
 
         var baseCustomArr = [];
         for (var bci = 0; bci < ruleState.length; bci++) {
@@ -2225,8 +2285,7 @@ var BanquetOptimizer = (function() {
                 }
                 if (!equipSkillOk) continue;
 
-                var eqRemain = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
-                var eqQty = getRecipeQuantity(recipeData, eqRemain, rule, equipChef);
+                var eqQty = getRecipeQuantity(recipeData, rule.materials, rule, equipChef);
                 if (rule.DisableMultiCookbook) eqQty = Math.min(eqQty, 1);
                 if (eqQty <= 0) continue;
 
@@ -2239,12 +2298,17 @@ var BanquetOptimizer = (function() {
             }
         }
 
+        // 粗排会临时切换厨具；精排基线必须恢复为进入函数时的完整槽位。
+        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+        _applyChefData(ruleIndex);
+
         roughPairs.sort(function(a, b) { return b.fastEst - a.fastEst; });
-        if (roughPairs.length > preciseTop) roughPairs.length = preciseTop;
+        if (!_cachedConfig.forceDeepSearch && roughPairs.length > preciseTop) roughPairs.length = preciseTop;
 
         var preciseResults = {};
         for (var pi = 0; pi < roughPairs.length; pi++) {
             var pair = roughPairs[pi];
+            _restoreSlotState(ruleIndex, chefIndex, savedSlot);
             ruleState[chefIndex].equipObj = pair.equipObj || {};
             ruleState[chefIndex].recipes[recipeIndex] = {data: pair.data, quantity: pair.qty, max: pair.qty};
             var preciseScore = fastMode === false ? _fastCalcScore() : _calcRuleScore(ruleIndex, true);
@@ -2260,8 +2324,7 @@ var BanquetOptimizer = (function() {
             }
         }
 
-        ruleState[chefIndex].recipes[recipeIndex] = savedRecipe;
-        ruleState[chefIndex].equipObj = savedEquip;
+        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
         _applyChefData(ruleIndex);
 
         var results = [];
@@ -2287,6 +2350,15 @@ var BanquetOptimizer = (function() {
         return _fastGetRecipeRankingBase(ruleIndex, chefIndex, recipeIndex, topK, fastMode);
     }
 
+    function _shouldWidenRecipeSearch(ruleIndex, chefIndex) {
+        if (_cachedConfig.forceDeepSearch) return true;
+        if (!_hasRecipeDependentIntents(ruleIndex, chefIndex)) return false;
+        var intentAddInfo = _analyzeIntentAddPositions(ruleIndex);
+        return _analyzeNextDishIntents(ruleIndex, chefIndex).length > 0
+            || _analyzeThreeSkillIntents(ruleIndex).length > 0
+            || intentAddInfo.hasIntentAdd;
+    }
+
     function _fastGetRecipeRankingBase(ruleIndex, chefIndex, recipeIndex, topK, fastMode) {
         var rule = _rules[ruleIndex];
         var menus = _menusByRule[ruleIndex];
@@ -2295,6 +2367,7 @@ var BanquetOptimizer = (function() {
         // 收集所有已用菜谱
         var usedRecipeIds = {};
         for (var ri = 0; ri < _simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
                     if (ri === ruleIndex && ci === chefIndex && reci === recipeIndex) continue;
@@ -2307,11 +2380,9 @@ var BanquetOptimizer = (function() {
         }
         
         var chefObj = ruleState[chefIndex].chefObj;
-        var savedRecipe = ruleState[chefIndex].recipes[recipeIndex];
         var slotIdx = 3 * chefIndex + recipeIndex;
         
-        // ===== 分析调料/稀有度/品阶/技法加成意图 =====
-        var condimentBonus = _analyzeCondimentIntents(ruleIndex);
+        // ===== 分析稀有度/品阶/技法加成意图 =====
         var rarityRankBonus = _analyzeRarityRankIntents(ruleIndex);
         var cookSkillBonus = _analyzeCookSkillIntents(ruleIndex);
         var intentAddInfo = _analyzeIntentAddPositions(ruleIndex);
@@ -2333,9 +2404,6 @@ var BanquetOptimizer = (function() {
         var slotPartialAdds = basePartialAdds[slotIdx];
         var slotIntentAdds = baseIntentAdds[slotIdx];
         
-        // 预计算剩余食材（排除当前位置）
-        var preRemainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
-        
         // ===== 第一阶段：固定intentAdds粗排（全部菜谱） =====
         var phase1 = [];
         
@@ -2353,7 +2421,7 @@ var BanquetOptimizer = (function() {
                 if (rd.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < rd.steam)) continue;
             }
             
-            var qty = getRecipeQuantity(rd, preRemainMaterials, rule, chefObj);
+            var qty = getRecipeQuantity(rd, rule.materials, rule, chefObj);
             if (rule.DisableMultiCookbook) qty = Math.min(qty, 1);
             
             var tempRecipes = [
@@ -2374,11 +2442,8 @@ var BanquetOptimizer = (function() {
             var actAdd = (g.data && g.data.activityAddition) ? g.data.activityAddition : 0;
             var est = Math.ceil(+(g.totalScore * (1 + actAdd / 100)).toFixed(2));
             
-            // 加入调料/稀有度/品阶/技法加成的考虑（作为排序加分）
+            // 稀有度/品阶/技法加成仅用于粗排；实际效果统一由后续精确计分确认。
             var bonusWeight = 0;
-            if (rd.condiment && condimentBonus[rd.condiment]) {
-                bonusWeight += condimentBonus[rd.condiment];
-            }
             if (rd.rarity && rarityRankBonus.rarityBonus[rd.rarity]) {
                 bonusWeight += rarityRankBonus.rarityBonus[rd.rarity];
             }
@@ -2399,10 +2464,6 @@ var BanquetOptimizer = (function() {
             if (intentAddInfo.hasIntentAdd && intentAddInfo.positionWeights[chefIndex]) {
                 // 当前位置有IntentAdd，检查菜谱能触发多少同位置意图
                 var intentAddBonus = 0;
-                // 调料匹配
-                if (rd.condiment && condimentBonus[rd.condiment]) {
-                    intentAddBonus += condimentBonus[rd.condiment] * 0.5; // IntentAdd翻倍效果
-                }
                 // 技法匹配
                 for (var ski2 = 0; ski2 < skillKeys.length; ski2++) {
                     if (rd[skillKeys[ski2]] > 0 && cookSkillBonus[skillKeys[ski2]]) {
@@ -2451,22 +2512,28 @@ var BanquetOptimizer = (function() {
         phase1.sort(function(a, b) { return b.estWithBonus - a.estWithBonus; });
         // 粗排取top（根据topK动态调整各阶段候选数）
         var needPhase2 = _hasRecipeDependentIntents(ruleIndex, chefIndex);
+        // 所有依赖菜谱属性的意图都可能由整组三道菜共同触发，不能只依赖单菜粗估。
+        // 对这类位置统一扩大精算范围；更复杂的链式意图仍由后续全量深搜覆盖。
+        var complexIntentSearch = needPhase2 || _shouldWidenRecipeSearch(ruleIndex, chefIndex);
+        // 有菜谱属性意图时，单菜粗估无法判断整组触发收益。扩大进入真实计分的
+        // 候选池，避免高价值触发菜在启发式阶段被提前淘汰。
+        var phase1Floor = complexIntentSearch ? 140 : CONFIG.preFilterTop;
         // 动态候选数 — topK小时大幅减少Phase2/3开销
         var phase2Size, phase1Top;
         if (!needPhase2) {
             // 无菜谱依赖意图：跳过Phase2
-            phase1Top = Math.max(topK || 10, CONFIG.preFilterTop);
+            phase1Top = Math.max(topK || 10, phase1Floor);
             phase2Size = 0;
         } else if (topK && topK <= 3) {
             // 只需少量结果（贪心填充/精调）：Phase2只精排top8
-            phase1Top = Math.max(topK, CONFIG.preFilterTop);
-            phase2Size = 8;
+            phase1Top = Math.max(topK, phase1Floor);
+            phase2Size = complexIntentSearch ? 56 : 8;
         } else {
             // 需要较多结果（种子选择等）：Phase2精排top15
-            phase1Top = Math.max(topK || 10, CONFIG.preFilterTop, 40);
-            phase2Size = 15;
+            phase1Top = Math.max(topK || 10, phase1Floor, 40);
+            phase2Size = complexIntentSearch ? 80 : 15;
         }
-        if (phase1.length > phase1Top) phase1.length = phase1Top;
+        if (!_cachedConfig.forceDeepSearch && phase1.length > phase1Top) phase1.length = phase1Top;
         
         // ===== 第二阶段：逐候选重算intentAdds精排 =====
         // 仅当位置有依赖菜谱属性的意图时才执行Phase2
@@ -2475,9 +2542,10 @@ var BanquetOptimizer = (function() {
         
         if (needPhase2 && phase2Size > 0) {
             _timeStats.phase2Executed = (_timeStats.phase2Executed || 0) + 1;
-            _timeStats.phase2Calls = (_timeStats.phase2Calls || 0) + Math.min(phase2Size, phase1.length);
+            _timeStats.phase2Calls = (_timeStats.phase2Calls || 0)
+                + (_cachedConfig.forceDeepSearch ? phase1.length : Math.min(phase2Size, phase1.length));
             // 有菜谱依赖意图：对top候选逐个重算
-            var phase2Limit = Math.min(phase2Size, phase1.length);
+            var phase2Limit = _cachedConfig.forceDeepSearch ? phase1.length : Math.min(phase2Size, phase1.length);
             for (var i = 0; i < phase2Limit; i++) {
                 var rd = phase1[i].rd;
                 var qty = phase1[i].qty;
@@ -2532,8 +2600,8 @@ var BanquetOptimizer = (function() {
             }
             
             phase2.sort(function(a, b) { return b.est - a.est; });
-            var maxCandidates = Math.max(topK || 10, CONFIG.preFilterTop);
-            if (phase2.length > maxCandidates) phase2.length = maxCandidates;
+            var maxCandidates = Math.max(topK || 10, phase1Floor);
+            if (!_cachedConfig.forceDeepSearch && phase2.length > maxCandidates) phase2.length = maxCandidates;
         } else {
             _timeStats.phase2Skipped = (_timeStats.phase2Skipped || 0) + 1;
             // 无菜谱依赖意图或不需Phase2，Phase1排名直接传递
@@ -2545,15 +2613,18 @@ var BanquetOptimizer = (function() {
         // ===== 第三阶段：精确rule分数计算（含饱食度等全局效果） =====
         var results = [];
         var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
+        var savedSlot = _cloneSlotState(ruleState[chefIndex]);
         
         for (var i = 0; i < phase2.length; i++) {
-            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, phase2[i].rd.recipeId, preRemainMaterials);
+            _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, phase2[i].rd.recipeId);
             var score = calcFn();
             results.push({recipeId: phase2[i].rd.recipeId, score: score});
         }
         
-        // 恢复原菜谱
-        ruleState[chefIndex].recipes[recipeIndex] = savedRecipe;
+        // 恢复完整槽位，候选菜的份数变化不得泄漏到下一次搜索。
+        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+        _applyChefData(ruleIndex);
         
         results.sort(function(a, b) { return b.score - a.score; });
         if (topK && results.length > topK) results.length = topK;
@@ -2570,6 +2641,7 @@ var BanquetOptimizer = (function() {
     function _getUsedChefIds(excludeRule, excludeChef) {
         var used = {};
         for (var ri = 0; ri < _simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 if (ri === excludeRule && ci === excludeChef) continue;
                 if (_simState[ri][ci].chefId) {
@@ -2949,7 +3021,6 @@ var BanquetOptimizer = (function() {
         var filtered = [];
         
         // 分析各种加成意图
-        var condimentBonus = _analyzeCondimentIntents(ruleIndex);
         var rarityRankBonus = _analyzeRarityRankIntents(ruleIndex);
         
         for (var i = 0; i < menus.length; i++) {
@@ -2964,12 +3035,6 @@ var BanquetOptimizer = (function() {
             }
             
             if (hasAllSkills) {
-                // 计算调料加成权重
-                var condimentWeight = 0;
-                if (rd.condiment && condimentBonus[rd.condiment]) {
-                    condimentWeight = condimentBonus[rd.condiment];
-                }
-                
                 // 计算稀有度加成权重
                 var rarityWeight = 0;
                 if (rd.rarity && rarityRankBonus.rarityBonus[rd.rarity]) {
@@ -2985,7 +3050,7 @@ var BanquetOptimizer = (function() {
                 filtered.push({
                     recipe: rd,
                     price: rd.price || 0,
-                    bonusWeight: condimentWeight + rarityWeight + rankWeight
+                    bonusWeight: rarityWeight + rankWeight
                 });
             }
         }
@@ -2999,66 +3064,6 @@ var BanquetOptimizer = (function() {
         
         // 返回菜谱数据
         return filtered.map(function(f) { return f.recipe; });
-    }
-
-    /**
-     * 分析调料加成意图
-     * 返回: { 'Spicy': 100, 'Salty': 50, ... } 调料 -> 加成权重
-     */
-    var _condimentIntentCache = {};
-    function _analyzeCondimentIntents(ruleIndex) {
-        if (_condimentIntentCache.hasOwnProperty(ruleIndex)) {
-            return _condimentIntentCache[ruleIndex];
-        }
-        var rule = _rules[ruleIndex];
-        var condimentBonus = {};
-        
-        if (!rule.IntentList || !_gameData || !_gameData.intents) {
-            return condimentBonus;
-        }
-        
-        // 遍历所有厨师位置的意图
-        for (var ci = 0; ci < rule.IntentList.length; ci++) {
-            var intentIds = rule.IntentList[ci];
-            if (!intentIds) continue;
-            
-            for (var ii = 0; ii < intentIds.length; ii++) {
-                for (var jj = 0; jj < _gameData.intents.length; jj++) {
-                    if (_gameData.intents[jj].intentId !== intentIds[ii]) continue;
-                    var intent = _gameData.intents[jj];
-                    
-                    // 检查是否是CondimentSkill条件的加成意图
-                    if (intent.conditionType === 'CondimentSkill' && intent.conditionValue) {
-                        // 跳过纯饱食度意图
-                        if (SATIETY_ONLY_EFFECTS[intent.effectType]) continue;
-                        
-                        // 计算权重
-                        var weight = 0;
-                        if (intent.effectType === 'PriceChangePercent' || intent.effectType === 'BasicPriceChangePercent') {
-                            weight = Math.abs(intent.effectValue || 0);
-                        } else if (intent.effectType === 'BasicPriceChange') {
-                            weight = Math.abs(intent.effectValue || 0) / 5; // 固定值转换为百分比等效
-                        } else if (intent.effectType === 'IntentAdd') {
-                            weight = 50; // 意图加一很有价值
-                        } else if (intent.effectType === 'CreateIntent' || intent.effectType === 'CreateBuff') {
-                            weight = 30; // 链式意图也有价值
-                        }
-                        
-                        if (weight > 0) {
-                            var condiment = intent.conditionValue;
-                            if (!condimentBonus[condiment]) {
-                                condimentBonus[condiment] = 0;
-                            }
-                            condimentBonus[condiment] += weight;
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-        
-        _condimentIntentCache[ruleIndex] = condimentBonus;
-        return condimentBonus;
     }
 
     /**
@@ -3973,9 +3978,15 @@ var BanquetOptimizer = (function() {
             if (!intentStrategy || intentStrategy.prePlaceList.length === 0) {
                 return;
             }
+            // 初始化的菜谱种子在选厨师前生成。此时只按意图与全局去重预放置，
+            // 待候选厨师确定后再用 _findBestFilteredRecipe 做技法和真实分数校正。
+            var slot = _simState[ruleIndex][chefIndex];
+            var hasChef = !!(slot && slot.chefObj && slot.chefObj.chefId);
             for (var pp = 0; pp < intentStrategy.prePlaceList.length; pp++) {
                 var prePlace = intentStrategy.prePlaceList[pp];
-                var prePlaceRecipeId = _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
+                var prePlaceRecipeId = hasChef
+                    ? _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn)
+                    : _findBestIntentRecipeSeed(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
                 if (prePlaceRecipeId) {
                     _simSetRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlaceRecipeId);
                 }
@@ -3993,15 +4004,8 @@ var BanquetOptimizer = (function() {
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             var gName = rule.Title || ('贵客' + (mainRule + 1));
             
-            // 输出该贵客的调料/稀有度/品阶加成意图
-            var condimentBonus = _analyzeCondimentIntents(mainRule);
+            // 输出该贵客的稀有度/品阶加成意图
             var rarityRankBonus = _analyzeRarityRankIntents(mainRule);
-            var condimentList = [];
-            var condimentNameMap = {'Spicy': '辣', 'Sweet': '甜', 'Sour': '酸', 'Salty': '咸', 'Bitter': '苦', 'Tasty': '鲜'};
-            for (var cond in condimentBonus) {
-                var condName = condimentNameMap[cond] || cond;
-                condimentList.push(condName + ':' + condimentBonus[cond]);
-            }
             var rarityList = [];
             for (var rar in rarityRankBonus.rarityBonus) {
                 rarityList.push(rar + '火:' + rarityRankBonus.rarityBonus[rar]);
@@ -4130,40 +4134,45 @@ var BanquetOptimizer = (function() {
 
                             _applyRecipeSelection(mainRule, seedPos, seedRecipeIdx, topRecipes[rsi]);
                             _simSetChef(mainRule, seedPos, chefCandidate.chefId);
+                            _applyInitPrePlace(mainRule, seedPos, intentStrategy);
                             var lockedSeedRanking = _getSeedRecipeRanking(mainRule, seedPos, seedRecipeIdx, 1, true);
                             if (lockedSeedRanking.length > 0) {
                                 _applyRecipeSelection(mainRule, seedPos, seedRecipeIdx, lockedSeedRanking[0]);
                             }
-                            _greedyFillRecipesOrdered(mainRule, seedPos, fillOrder, seedRecipeIdx);
-
-                            for (var ci = 0; ci < numChefs; ci++) {
-                                if (ci === seedPos) continue;
-                                var otherStrategy = _analyzeIntents(mainRule, ci);
-                                _greedyFillPositionWithIntent(mainRule, ci, otherStrategy);
-                            }
-
-                            for (var otherIdx = 0; otherIdx < activeRules.length; otherIdx++) {
-                                if (activeRules[otherIdx] === mainRule) continue;
-                                _greedyFillGuestFullWithIntent(activeRules[otherIdx]);
-                            }
-
-                            _quickRefineFast(activeRules, true);
-
-                            var score = _fastCalcScore();
                             var chefName = _getChefNameById(chefCandidate.chefId);
-                            candidates.push({
-                                state: _cloneSimState(_simState),
-                                score: score,
-                                label: gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName
-                            });
-                            _logStateSnapshot('candidate', '生成初始化候选', _simState, score, {
-                                label: gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName,
-                                stage: 'seed'
-                            });
+                            var recipeBeam = _buildRecipeBeamStates(mainRule, seedPos, fillOrder, seedRecipeIdx);
+                            for (var beamIndex = 0; beamIndex < recipeBeam.length; beamIndex++) {
+                                _simState = _cloneSimState(recipeBeam[beamIndex]);
 
-                            if (_targetScore && score >= _targetScore && _isAllSatietyOk()) {
-                                _finishInitialization(candidates, activeRules, onDone);
-                                return;
+                                for (var ci = 0; ci < numChefs; ci++) {
+                                    if (ci === seedPos) continue;
+                                    var otherStrategy = _analyzeIntents(mainRule, ci);
+                                    _greedyFillPositionWithIntent(mainRule, ci, otherStrategy);
+                                }
+
+                                for (var otherIdx = 0; otherIdx < activeRules.length; otherIdx++) {
+                                    if (activeRules[otherIdx] === mainRule) continue;
+                                    _greedyFillGuestFullWithIntent(activeRules[otherIdx]);
+                                }
+
+                                _quickRefineFast(activeRules, true);
+
+                                var score = _fastCalcScore();
+                                var label = gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName + ' 分支' + (beamIndex + 1);
+                                candidates.push({
+                                    state: _cloneSimState(_simState),
+                                    score: score,
+                                    label: label
+                                });
+                                _logStateSnapshot('candidate', '生成初始化候选', _simState, score, {
+                                    label: label,
+                                    stage: 'seed-beam'
+                                });
+
+                                if (_targetScore && score >= _targetScore && _isAllSatietyOk()) {
+                                    _finishInitialization(candidates, activeRules, onDone);
+                                    return;
+                                }
                             }
 
                             completedSubSteps++;
@@ -4221,6 +4230,7 @@ var BanquetOptimizer = (function() {
 
                             _simSetRecipe(mainRule, currentSynSeedPos, synSeedRecipeIdx, sp.recipeId);
                             _simSetChef(mainRule, currentSynSeedPos, sp.chefId);
+                            _applyInitPrePlace(mainRule, currentSynSeedPos, synStrategy);
 
                             var synChefObj = _simState[mainRule][currentSynSeedPos].chefObj;
                             var synRd = _recipeMap[sp.recipeId];
@@ -4625,6 +4635,31 @@ var BanquetOptimizer = (function() {
      * 候选已达标时跳过精调直接返回
      */
     function _finishInitialization(candidates, activeRules, onDone) {
+        // 把页面当前方案作为保底种子纳入排序，避免优化结果低于用户已有方案。
+        var currentPageSeed = _buildCurrentPageSeed();
+        if (currentPageSeed) {
+            var savedState = _simState;
+            _simState = currentPageSeed;
+            var currentPageScore = _fastCalcScore();
+            var normalizedPageSeed = _cloneSimState(_simState);
+            _simState = savedState;
+            candidates.push({
+                state: normalizedPageSeed,
+                score: currentPageScore,
+                label: '当前页面方案',
+                preserveSeed: true
+            });
+            _debugLog('init-summary', '加入当前页面方案种子', {
+                score: currentPageScore,
+                satietyOk: (function() {
+                    var before = _simState;
+                    _simState = normalizedPageSeed;
+                    var ok = _isAllSatietyOk();
+                    _simState = before;
+                    return ok;
+                })()
+            });
+        }
         candidates.sort(function(a, b) { return b.score - a.score; });
         _debugLog('init-summary', '初始化候选排序完成', {
             count: candidates.length,
@@ -4640,19 +4675,37 @@ var BanquetOptimizer = (function() {
             })
         });
         
-        for (var t = 0; t < Math.min(5, candidates.length); t++) {
-        }
-        
         if (candidates.length > 0) {
             _topCandidates = [];
             _topCandidateMeta = [];
             var numTop = Math.min(_getRuntimeConfigValue('initKeepTop'), candidates.length);
-            for (var t = 0; t < numTop; t++) {
-                _topCandidates.push(_cloneSimState(candidates[t].state));
+            var selectedCandidateSignatures = {};
+            for (var candidateIndex = 0; candidateIndex < candidates.length && _topCandidates.length < numTop; candidateIndex++) {
+                var candidateSignature = _getStateSignature(candidates[candidateIndex].state);
+                if (selectedCandidateSignatures[candidateSignature]) continue;
+                selectedCandidateSignatures[candidateSignature] = true;
+                _topCandidates.push(_cloneSimState(candidates[candidateIndex].state));
                 _topCandidateMeta.push({
-                    label: candidates[t].label,
-                    initScore: candidates[t].score,
-                    score: candidates[t].score
+                    label: candidates[candidateIndex].label,
+                    initScore: candidates[candidateIndex].score,
+                    score: candidates[candidateIndex].score,
+                    preserveSeed: !!candidates[candidateIndex].preserveSeed
+                });
+            }
+
+            // 当前页面方案是额外保留的探索起点，不受 initKeepTop 截断影响。
+            // 它可能初始分较低，却位于常规种子无法到达的局部最优盆地。
+            for (var pageCandidateIndex = 0; pageCandidateIndex < candidates.length; pageCandidateIndex++) {
+                if (!candidates[pageCandidateIndex].preserveSeed) continue;
+                var pageCandidateSignature = _getStateSignature(candidates[pageCandidateIndex].state);
+                if (selectedCandidateSignatures[pageCandidateSignature]) continue;
+                selectedCandidateSignatures[pageCandidateSignature] = true;
+                _topCandidates.push(_cloneSimState(candidates[pageCandidateIndex].state));
+                _topCandidateMeta.push({
+                    label: candidates[pageCandidateIndex].label,
+                    initScore: candidates[pageCandidateIndex].score,
+                    score: candidates[pageCandidateIndex].score,
+                    preserveSeed: true
                 });
             }
             
@@ -4746,12 +4799,13 @@ var BanquetOptimizer = (function() {
             
             var totalMenusInit = 0;
             for (var mi = 0; mi < _menusByRule.length; mi++) totalMenusInit += _menusByRule[mi].length;
-            var seedRefineMode = totalMenusInit > 800 ? true : false;
+            // 强制深度搜索时不因菜谱数量降级为轻量精调。
+            var seedRefineMode = !_cachedConfig.forceDeepSearch && totalMenusInit > 800 ? true : false;
             
                 for (var t = 1; t < _topCandidates.length; t++) {
                     _simState = _topCandidates[t];
                     var currentSeedRefineMode = seedRefineMode;
-                    if (_isSingleGuestMode() && currentSeedRefineMode === false && t >= 4) {
+                    if (!_cachedConfig.forceDeepSearch && _isSingleGuestMode() && currentSeedRefineMode === false && t >= 4) {
                         currentSeedRefineMode = true;
                     }
                     _quickRefineFast(activeRulesForRefine, currentSeedRefineMode);
@@ -4775,6 +4829,13 @@ var BanquetOptimizer = (function() {
         if (typeof onDone === 'function') onDone();
             } // end _continueOtherCandidates
             } // end _continueRefineProcess
+        } else {
+            _topCandidates = [];
+            _topCandidateMeta = [];
+            _debugLog('init-summary', '没有满足当前筛选条件的初始化候选', {
+                activeRules: activeRules.slice()
+            });
+            if (typeof onDone === 'function') onDone();
         }
         
     }
@@ -4949,7 +5010,7 @@ var BanquetOptimizer = (function() {
     function _calcCurrentSatiety(ruleIndex) {
         var ruleState = _simState[ruleIndex];
         // 先调用_calcRuleScore确保satiety值被计算
-        _calcRuleScore(ruleIndex, true);
+        _calcRuleScore(ruleIndex, true, true);
         var total = 0;
         var details = [];
         for (var ci = 0; ci < ruleState.length; ci++) {
@@ -4980,6 +5041,7 @@ var BanquetOptimizer = (function() {
         // 收集已用菜谱
         var usedRecipeIds = {};
         for (var ri = 0; ri < _simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
                     if (ri === ruleIndex && ci === chefIndex && reci === recipeIndex) continue;
@@ -4989,23 +5051,63 @@ var BanquetOptimizer = (function() {
             }
         }
         
-        // 简单策略：从满足条件的菜谱中选价格最高的（无厨师时无法精确评分）
-        var bestRecipe = null;
-        var bestPrice = -1;
+        var chefObj = ruleState[chefIndex].chefObj;
+        if (!chefObj || !chefObj.chefId) return null;
+        var rule = _rules[ruleIndex];
+        var candidates = [];
         
         for (var i = 0; i < menus.length; i++) {
             var rd = menus[i];
             if (usedRecipeIds[rd.recipeId]) continue;
             if (!filterFn(rd)) continue;
-            
-            var price = rd.price || 0;
-            if (price > bestPrice) {
-                bestPrice = price;
-                bestRecipe = rd;
+            if (rd.stirfry > 0 && (!chefObj.stirfryVal || chefObj.stirfryVal < rd.stirfry)) continue;
+            if (rd.boil > 0 && (!chefObj.boilVal || chefObj.boilVal < rd.boil)) continue;
+            if (rd.knife > 0 && (!chefObj.knifeVal || chefObj.knifeVal < rd.knife)) continue;
+            if (rd.fry > 0 && (!chefObj.fryVal || chefObj.fryVal < rd.fry)) continue;
+            if (rd.bake > 0 && (!chefObj.bakeVal || chefObj.bakeVal < rd.bake)) continue;
+            if (rd.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < rd.steam)) continue;
+            var quantity = getRecipeQuantity(rd, rule.materials, rule, chefObj);
+            if (rule.DisableMultiCookbook) quantity = Math.min(quantity, 1);
+            if (quantity <= 0) continue;
+            candidates.push({ recipeId: rd.recipeId, roughScore: (rd.price || 0) * quantity });
+        }
+
+        candidates.sort(function(a, b) { return b.roughScore - a.roughScore; });
+        var candidateLimit = 40;
+        if (!_cachedConfig.forceDeepSearch && candidates.length > candidateLimit) candidates.length = candidateLimit;
+        var savedSlot = _cloneSlotState(ruleState[chefIndex]);
+        var bestRecipeId = null;
+        var bestScore = -Infinity;
+        for (var candidateIndex = 0; candidateIndex < candidates.length; candidateIndex++) {
+            _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, candidates[candidateIndex].recipeId);
+            var score = _fastCalcRuleScore(ruleIndex);
+            if (score > bestScore) {
+                bestScore = score;
+                bestRecipeId = candidates[candidateIndex].recipeId;
             }
         }
-        
-        return bestRecipe ? bestRecipe.recipeId : null;
+        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
+        _applyChefData(ruleIndex);
+        return bestRecipeId;
+    }
+
+    function _findBestIntentRecipeSeed(ruleIndex, chefIndex, recipeIndex, filterFn) {
+        var menus = _menusByRule[ruleIndex] || [];
+        var usedRecipeIds = _getUsedRecipeIdsExcludingPosition(_simState, ruleIndex, chefIndex, recipeIndex);
+        var bestRecipeId = null;
+        var bestValue = -Infinity;
+        for (var i = 0; i < menus.length; i++) {
+            var recipe = menus[i];
+            if (!recipe || usedRecipeIds[recipe.recipeId] || !filterFn(recipe)) continue;
+            // 无厨师阶段无法精确计算减材后的份数；用售价和稀有度做稳定的候选种子排序。
+            var value = (recipe.price || 0) * 100 + (recipe.rarity || 0);
+            if (value > bestValue) {
+                bestValue = value;
+                bestRecipeId = recipe.recipeId;
+            }
+        }
+        return bestRecipeId;
     }
 
     /**
@@ -5025,6 +5127,48 @@ var BanquetOptimizer = (function() {
     }
 
     /**
+     * 初始化种子补全三道菜时保留少量并行路径。普通贪心每格只取第一名，
+     * 一道局部最优菜可能挤掉后续更高价值的意图组合；这里用精确 rule 分数
+     * 评价每一步展开后的状态，并在每步截断到固定宽度。
+     */
+    function _buildRecipeBeamStates(ruleIndex, chefIndex, fillOrder, seedRecipeIdx) {
+        var baseState = _cloneSimState(_simState);
+        var beam = [baseState];
+        var beamWidth = _getRuntimeConfigValue('initRecipeBeamWidth') || 1;
+        var choicesPerSlot = _getRuntimeConfigValue('initRecipeBeamChoices') || 1;
+
+        for (var fi = 0; fi < fillOrder.length; fi++) {
+            var recipeIndex = fillOrder[fi];
+            if (recipeIndex === seedRecipeIdx || baseState[ruleIndex][chefIndex].recipes[recipeIndex].data) continue;
+
+            var expanded = [];
+            var seen = {};
+            for (var bi = 0; bi < beam.length; bi++) {
+                _simState = _cloneSimState(beam[bi]);
+                var ranking = _fastGetRecipeRanking(ruleIndex, chefIndex, recipeIndex, choicesPerSlot, true);
+                for (var ri = 0; ri < ranking.length; ri++) {
+                    _simState = _cloneSimState(beam[bi]);
+                    _applyRecipeSelection(ruleIndex, chefIndex, recipeIndex, ranking[ri]);
+                    var signature = _getStateSignature(_simState);
+                    if (seen[signature]) continue;
+                    seen[signature] = true;
+                    expanded.push({
+                        state: _cloneSimState(_simState),
+                        score: _fastCalcRuleScore(ruleIndex)
+                    });
+                }
+            }
+            if (!expanded.length) continue;
+            expanded.sort(function(a, b) { return b.score - a.score; });
+            if (expanded.length > beamWidth) expanded.length = beamWidth;
+            beam = expanded.map(function(item) { return item.state; });
+        }
+
+        _simState = baseState;
+        return beam;
+    }
+
+    /**
      * 用意图感知策略填充一个厨师位置（菜谱+厨师+剩余菜谱）
      */
     function _greedyFillPositionWithIntent(ruleIndex, chefIndex, intentStrategy) {
@@ -5035,7 +5179,8 @@ var BanquetOptimizer = (function() {
         if (intentStrategy.prePlaceList.length > 0) {
         for (var pp = 0; pp < intentStrategy.prePlaceList.length; pp++) {
             var prePlace = intentStrategy.prePlaceList[pp];
-            var prePlaceRecipeId = _findBestFilteredRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
+            // 此时尚未选择厨师，先放一个满足链式条件的稳定种子，供厨师排序参考。
+            var prePlaceRecipeId = _findBestIntentRecipeSeed(ruleIndex, chefIndex, prePlace.recipeIndex, prePlace.filterFn);
             if (prePlaceRecipeId) {
                 _simSetRecipe(ruleIndex, chefIndex, prePlace.recipeIndex, prePlaceRecipeId);
                 }
@@ -5055,6 +5200,16 @@ var BanquetOptimizer = (function() {
             if (!cr[k].used && !usedIds[cr[k].chefId] && cr[k].skillOk !== false) {
                 _simSetChef(ruleIndex, chefIndex, cr[k].chefId);
                 break;
+            }
+        }
+
+        // 种子菜仅用于无厨师阶段的候选筛选；厨师确定后必须按真实技法和
+        // 完整食材池重新选择链式触发菜，不能保留此前的粗排结果。
+        for (var postPp = 0; postPp < intentStrategy.prePlaceList.length; postPp++) {
+            var postPrePlace = intentStrategy.prePlaceList[postPp];
+            var postPrePlaceRecipeId = _findBestFilteredRecipe(ruleIndex, chefIndex, postPrePlace.recipeIndex, postPrePlace.filterFn);
+            if (postPrePlaceRecipeId) {
+                _simSetRecipe(ruleIndex, chefIndex, postPrePlace.recipeIndex, postPrePlaceRecipeId);
             }
         }
 
@@ -5366,7 +5521,12 @@ var BanquetOptimizer = (function() {
                 if (rd1.bake > 0 && (!chef2.bakeVal || chef2.bakeVal < rd1.bake)) continue;
                 if (rd1.steam > 0 && (!chef2.steamVal || chef2.steamVal < rd1.steam)) continue;
                 
-                // 执行交换
+                // 先移除双方旧菜，再按交换后的顺序落盘，保持交换后的份数独立计算。
+                var sameSlot = p1.ri === p2.ri && p1.ci === p2.ci;
+                var savedSlot1 = _cloneSlotState(_simState[p1.ri][p1.ci]);
+                var savedSlot2 = sameSlot ? null : _cloneSlotState(_simState[p2.ri][p2.ci]);
+                _simSetRecipe(p1.ri, p1.ci, p1.reci, null);
+                _simSetRecipe(p2.ri, p2.ci, p2.reci, null);
                 _simSetRecipe(p1.ri, p1.ci, p1.reci, rd2.recipeId);
                 _simSetRecipe(p2.ri, p2.ci, p2.reci, rd1.recipeId);
                 
@@ -5377,9 +5537,10 @@ var BanquetOptimizer = (function() {
                     _bestSimState = _cloneSimState(_simState);
                     improved = true;
                 } else {
-                    // 换回来
-                    _simSetRecipe(p1.ri, p1.ci, p1.reci, rd1.recipeId);
-                    _simSetRecipe(p2.ri, p2.ci, p2.reci, rd2.recipeId);
+                    _restoreSlotState(p1.ri, p1.ci, savedSlot1);
+                    if (!sameSlot) {
+                        _restoreSlotState(p2.ri, p2.ci, savedSlot2);
+                    }
                 }
             }
         }
@@ -5395,7 +5556,7 @@ var BanquetOptimizer = (function() {
      * 单独换厨师或单独换菜谱都找不到这种组合
      */
     function _climbJointChefRecipe() {
-        if (_isSingleGuestMode()) return false;
+        if (_isSingleGuestMode() && !_cachedConfig.forceDeepSearch) return false;
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
@@ -5750,7 +5911,16 @@ var BanquetOptimizer = (function() {
         _progressDisplayScore = 0;
         _progressTarget = 0;
         _progressStartTime = Date.now();
-        _progressEstTotal = 80000; // 初始预估80秒
+        var activeRuleCount = _getActiveRuleCount();
+        var menuCount = 0;
+        for (var ri = 0; ri < _menusByRule.length; ri++) {
+            if (_shouldProcessRule(ri)) menuCount += _menusByRule[ri].length;
+        }
+        // 用搜索空间估算进度下限；强制深搜包含整贵客重建和逐槽尝试，预算更长。
+        _progressEstTotal = 30000 + activeRuleCount * 12000 + Math.min(menuCount, 1200) * 35;
+        if (_cachedConfig.forceDeepSearch) {
+            _progressEstTotal = Math.max(_progressEstTotal * 3, 150000);
+        }
         
         if (_progressTimer) clearInterval(_progressTimer);
         _progressTimer = setInterval(function() {
@@ -5849,6 +6019,12 @@ var BanquetOptimizer = (function() {
             
             _generateInitialSolutionAsync(onProgress, function() {
                 // 初始化完成回调
+                if (!_topCandidates.length || !_simState) {
+                    _bestScore = 0;
+                    _bestSimState = null;
+                    _finishOptimization(onComplete);
+                    return;
+                }
                 
                 var initialScore = _fastCalcScore();
                 _bestScore = initialScore;
@@ -5910,7 +6086,8 @@ var BanquetOptimizer = (function() {
                     meta: _topCandidateMeta[si] ? {
                         label: _topCandidateMeta[si].label,
                         initScore: _topCandidateMeta[si].initScore,
-                        score: _topCandidateMeta[si].score
+                        score: _topCandidateMeta[si].score,
+                        preserveSeed: !!_topCandidateMeta[si].preserveSeed
                     } : null
                 });
             }
@@ -5922,7 +6099,7 @@ var BanquetOptimizer = (function() {
         
         function _runSeedSearch() {
             if (seedIdx >= totalSeeds) {
-                _finishOptimization(onComplete);
+                _runBoundedRestartPhase(onProgress, onComplete);
                 return;
             }
             
@@ -5953,7 +6130,8 @@ var BanquetOptimizer = (function() {
                 }
             
             // 跳过分数过低的种子，但阈值放宽，避免误杀高潜力异构解
-            if (seedScore < _bestScore * CONFIG.seedSkipInitRatio && currentSeed > 0) {
+            if (!_cachedConfig.forceDeepSearch && !seedMeta.preserveSeed
+                && seedScore < _bestScore * CONFIG.seedSkipInitRatio && currentSeed > 0) {
 	                _debugLog('seed-skip', '种子初始分过低，跳过', {
 	                    seedIndex: currentSeed + 1,
 	                    label: seedMeta.label,
@@ -5996,7 +6174,8 @@ var BanquetOptimizer = (function() {
                 });
                 // 条件1：爬山无改进且仍明显落后 → 跳过
                 // 条件2：即使有改进，但距离最佳仍过大 → 跳过
-                if (currentSeed > 0 && ((!climbImproved && ratio < CONFIG.seedSkipAfterClimbNoImproveRatio) || ratio < CONFIG.seedSkipAfterClimbHardRatio)) {
+                if (!_cachedConfig.forceDeepSearch && !seedMeta.preserveSeed && currentSeed > 0
+                    && ((!climbImproved && ratio < CONFIG.seedSkipAfterClimbNoImproveRatio) || ratio < CONFIG.seedSkipAfterClimbHardRatio)) {
 	                    _debugLog('seed-skip', '爬山后种子潜力不足，跳过后续深搜', {
 	                        seedIndex: currentSeed + 1,
 	                        label: seedMeta.label,
@@ -6022,13 +6201,16 @@ var BanquetOptimizer = (function() {
                 }
                 
                 // 边界种子轻量搜索
-                var isLightSeed = (currentSeed > 0 && ratio < CONFIG.lightSeedRatio);
+                var isLightSeed = (!_cachedConfig.forceDeepSearch && !seedMeta.preserveSeed
+                    && currentSeed > 0 && ratio < CONFIG.lightSeedRatio);
                 var crossStageImproved = false;
                 if (isLightSeed) {
                 }
                 
-                // 跳过穷举搜索（历史数据显示从未产生改进）
-                // _exhaustiveSlotSearch(activeRules);
+                // 强制深度搜索额外尝试逐槽候选，常规模式仍避免这一高耗时分支。
+                if (_cachedConfig.forceDeepSearch) {
+                    _exhaustiveSlotSearch(activeRules);
+                }
                 
                 // 多轮跨贵客（边界种子只做1轮，正常种子最多2轮）
                 var crossRound = 0;
@@ -6120,12 +6302,17 @@ var BanquetOptimizer = (function() {
                     // 整贵客重建只在跨贵客阶段确实产生新解时执行
                     // 之前这里误用 seedScore，导致只要初始爬山有提升就会触发整贵客重建
                     var crossDidImprove = crossStageImproved;
-                    var allowFullGuestRebuild = CONFIG.enableFullGuestRebuild && crossDidImprove && !_disableFullGuestRebuild;
+                    var allowFullGuestRebuild = !_isSingleGuestMode()
+                        && (CONFIG.enableFullGuestRebuild || _cachedConfig.forceDeepSearch)
+                        && (crossDidImprove || _cachedConfig.forceDeepSearch)
+                        && (!_disableFullGuestRebuild || _cachedConfig.forceDeepSearch);
                     var fullGuestRebuildReason = allowFullGuestRebuild
                         ? 'executed'
-                        : (!CONFIG.enableFullGuestRebuild
+                        : (_isSingleGuestMode()
+                            ? 'single-guest'
+                            : (!(CONFIG.enableFullGuestRebuild || _cachedConfig.forceDeepSearch)
                             ? 'config-disabled'
-                            : (crossDidImprove ? 'disabled-after-miss' : 'no-cross-improve'));
+                            : (crossDidImprove ? 'disabled-after-miss' : 'no-cross-improve')));
                     
                     // 整贵客重建放到setTimeout中
                     setTimeout(function() {
@@ -6135,7 +6322,7 @@ var BanquetOptimizer = (function() {
                             var rebuildImproved = _fullGuestRebuild(activeRules);
                             if (rebuildImproved) {
                                 _fullGuestRebuildHits++;
-                            } else {
+                            } else if (!_cachedConfig.forceDeepSearch) {
                                 // 日志显示该分支非常耗时且连续空跑，当前轮首次空跑后直接停用
                                 _disableFullGuestRebuild = true;
                             }
@@ -6197,14 +6384,16 @@ var BanquetOptimizer = (function() {
                     var finalSig = _getStateSignature(_bestSimState);
                     // 收敛到已知状态时跳过剩余种子（提前终止）
                     if (seenFinalSignatures[finalSig]) {
-                        // 与全局最佳比较后直接结束
+                        // 收敛只说明当前种子无新信息，不能据此放弃尚未搜索的异构种子。
                         if (seedFinalScore > globalBestScore) {
                             globalBestScore = seedFinalScore;
                             globalBestState = _cloneSimState(_bestSimState);
                         }
                         _bestScore = globalBestScore;
                         _bestSimState = globalBestState;
-                        _finishOptimization(onComplete, false);
+                        _simState = _cloneSimState(globalBestState);
+                        _setProgressTarget(Math.floor(10 + 80 * seedIdx / totalSeeds));
+                        setTimeout(_runSeedSearch, 2);
                         return;
                     }
                     seenFinalSignatures[finalSig] = true;
@@ -6257,6 +6446,55 @@ var BanquetOptimizer = (function() {
     }
 
     // 随机扰动保留为补充手段（主搜索改为系统性深度搜索）
+    function _runBoundedRestartPhase(onProgress, onComplete) {
+        var restartLimit = _getRuntimeConfigValue('restartRounds');
+        if (!restartLimit || !_bestSimState) {
+            _finishOptimization(onComplete);
+            return;
+        }
+
+        var round = 0;
+        var baselineScore = _bestScore;
+
+        function runNextRestart() {
+            if (round >= restartLimit || _isTargetReachedWithSatiety()) {
+                _simState = _cloneSimState(_bestSimState);
+                _finishOptimization(onComplete);
+                return;
+            }
+
+            round++;
+            var globalScore = _bestScore;
+            var globalState = _cloneSimState(_bestSimState);
+            _simState = _cloneSimState(globalState);
+            var perturbedScore = _perturbAndRebuild();
+            // 允许扰动后的较低分方案在自身局部盆地继续爬山，搜索结束后才同全局最佳比较。
+            _bestScore = perturbedScore;
+            _bestSimState = _cloneSimState(_simState);
+            _runClimbingPhase(0, function() {
+                var localScore = _bestScore;
+                var localState = _cloneSimState(_bestSimState);
+                if (localScore > globalScore) {
+                    _bestScore = localScore;
+                    _bestSimState = localState;
+                    baselineScore = localScore;
+                    _debugLog('restart', '扰动重启找到更优解', {
+                        round: round,
+                        before: globalScore,
+                        score: localScore
+                    });
+                } else {
+                    _bestScore = globalScore;
+                    _bestSimState = globalState;
+                }
+                setTimeout(runNextRestart, 2);
+            }, onProgress);
+        }
+
+        _debugLog('restart', '开始受控扰动重启', { rounds: restartLimit, score: baselineScore });
+        runNextRestart();
+    }
+
     function _perturbAndRebuild() {
         var activeRules = [];
         for (var ri = 0; ri < _rules.length; ri++) {
@@ -6300,7 +6538,8 @@ var BanquetOptimizer = (function() {
                 _applyRecipeSelection(slot.ri, slot.ci, slot.reci, rr[idx]);
             }
         }
-        _quickRefineFast(activeRules, false);
+        // 不在扰动阶段立即做完整精调，否则确定性的贪心会把状态拉回原局部最优，
+        // 使后续爬山没有机会沿着新组合继续搜索。
         return _fastCalcScore();
     }
     
@@ -6335,7 +6574,7 @@ var BanquetOptimizer = (function() {
             var strategy = _analyzeIntents(pos.ri, pos.ci);
             _greedyFillPositionWithIntent(pos.ri, pos.ci, strategy);
         }
-        _quickRefineFast(activeRules, false);
+        // 保留重建出的差异状态，交由受控重启后的完整爬山统一评估。
         return _fastCalcScore();
     }
 
@@ -6355,16 +6594,14 @@ var BanquetOptimizer = (function() {
             
             for (var ci = 0; ci < numChefs; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
-                    
-                    var curRecId = _simState[ruleIndex][ci].recipes[reci].data 
-                        ? _simState[ruleIndex][ci].recipes[reci].data.recipeId : null;
-                    
-                    var rk = _fastGetRecipeRanking(ruleIndex, ci, reci, CONFIG.recipeTopN, true);
+                    // 每个位置都以当前全局最佳方案生成候选，保证排名上下文与
+                    // 后续应用候选的状态一致，失败候选不得污染下一位置的搜索。
+                    _simState = _cloneSimState(_bestSimState);
+                    var rk = _fastGetRecipeRanking(ruleIndex, ci, reci, _getRuntimeConfigValue('recipeTopN'), true);
                     
                     for (var ki = 0; ki < rk.length; ki++) {
-                        if (_isSameRecipeSelection(ruleIndex, ci, reci, rk[ki])) continue;
-                        
                         _simState = _cloneSimState(_bestSimState);
+                        if (_isSameRecipeSelection(ruleIndex, ci, reci, rk[ki])) continue;
                         _applyRecipeSelection(ruleIndex, ci, reci, rk[ki]);
                         _quickRefineFast(activeRules, false);
                         
@@ -6392,13 +6629,13 @@ var BanquetOptimizer = (function() {
     function _crossGuestReassign(activeRules) {
         if (activeRules.length < 2) return false;
         
-        // 自适应精调深度 — 菜谱少时精调更深，菜谱多时轻量+后补
+        // 自适应精调深度：强制深度搜索开启时忽略菜谱数量。
         var totalMenus = 0;
         for (var mi = 0; mi < _menusByRule.length; mi++) totalMenus += _menusByRule[mi].length;
-        // 方案A精调模式：少菜谱完整，多菜谱轻量
-        var planARefineMode = totalMenus > 800 ? true : false;
-        // 方案B精调模式：少菜谱2轮，多菜谱轻量
-        var crossRefineMode = totalMenus > 800 ? true : 2;
+        // 方案A精调模式：少菜谱或强制深度搜索时完整，否则轻量。
+        var planARefineMode = !_cachedConfig.forceDeepSearch && totalMenus > 800 ? true : false;
+        // 方案B精调模式：少菜谱或强制深度搜索时2轮，否则轻量。
+        var crossRefineMode = !_cachedConfig.forceDeepSearch && totalMenus > 800 ? true : 2;
         
         var improved = false;
         
@@ -6461,6 +6698,15 @@ var BanquetOptimizer = (function() {
                         if (!cr[j].used && !usedIds[cr[j].chefId] && cr[j].skillOk !== false) {
                             _simSetChef(targetRule, seedPos, cr[j].chefId);
                             break;
+                        }
+                    }
+                    // 该分支在选厨师前无法精确筛选链式触发菜；厨师确定后重新放置，
+                    // 才能按真实技法和完整食材池参与后续种子、填充和精调。
+                    for (var postPp = 0; postPp < strategy.prePlaceList.length; postPp++) {
+                        var postPrePlace = strategy.prePlaceList[postPp];
+                        var postPrePlaceRecipeId = _findBestFilteredRecipe(targetRule, seedPos, postPrePlace.recipeIndex, postPrePlace.filterFn);
+                        if (postPrePlaceRecipeId) {
+                            _simSetRecipe(targetRule, seedPos, postPrePlace.recipeIndex, postPrePlaceRecipeId);
                         }
                     }
                     var lockedTargetSeedRanking = _getSeedRecipeRanking(targetRule, seedPos, seedRecipeIdx, 1, true);
@@ -6745,13 +6991,22 @@ var BanquetOptimizer = (function() {
 
         function _cleanupAndComplete(finalScore) {
             var totalTime = Date.now() - (_timeStats.startTime || Date.now());
+            var finalSatietyOk = !!_bestSimState && _isAllSatietyOk();
+            var finalSatietyDiff = _bestSimState ? _getTotalSatietyDiff() : null;
             _bestResult = { score: finalScore };
             _isRunning = false;
             _isFinishing = false;
             _stopProgressTimer();
 
             if (typeof onComplete === 'function') {
-                onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
+                onComplete({
+                    success: finalSatietyOk,
+                    score: finalScore,
+                    timeMs: totalTime,
+                    satietyOk: finalSatietyOk,
+                    satietyDiff: finalSatietyDiff,
+                    message: finalSatietyOk ? '优化完成' : '未找到饱食度完全达标的配置，未应用结果'
+                });
             }
 
             _simState = null;
@@ -6762,7 +7017,6 @@ var BanquetOptimizer = (function() {
             _recipeDependentIntentCache = {};
             _threeSkillIntentCache = {};
             _nextDishIntentCache = {};
-            _condimentIntentCache = {};
             _rarityRankIntentCache = {};
             _cookSkillIntentCache = {};
             _synergyCache = {};
@@ -6952,6 +7206,84 @@ var BanquetOptimizer = (function() {
             setTimeout(_processNextDuplicateRecipe, 0);
         }
 
+        function _findFallbackRecipeId(ri, ci, reci, usedRecipeIds) {
+            var rule = _rules[ri];
+            var chefObj = _simState[ri][ci].chefObj;
+            if (!rule || !chefObj || !chefObj.chefId) return null;
+            var bestRecipeId = null;
+            var bestValue = -Infinity;
+            var menus = _menusByRule[ri] || [];
+            for (var menuIndex = 0; menuIndex < menus.length; menuIndex++) {
+                var recipe = menus[menuIndex];
+                if (!recipe || usedRecipeIds[recipe.recipeId]) continue;
+                if (!_isRecipeSkillQualified(chefObj, recipe)) continue;
+                var quantity = getRecipeQuantity(recipe, rule.materials, rule, chefObj);
+                if (rule.DisableMultiCookbook) quantity = Math.min(quantity, 1);
+                if (quantity <= 0) continue;
+                var value = (recipe.price || 0) * quantity;
+                if (value > bestValue) {
+                    bestValue = value;
+                    bestRecipeId = recipe.recipeId;
+                }
+            }
+            return bestRecipeId;
+        }
+
+        function _fillFinalEmptyRecipesSequentially(onDone) {
+            var ri = 0;
+            var ci = 0;
+            var reci = 0;
+
+            function _processNextEmptyRecipe() {
+                while (ri < _rules.length) {
+                    if (!_shouldProcessRule(ri)) {
+                        ri++;
+                        ci = 0;
+                        reci = 0;
+                        continue;
+                    }
+                    var rule = _rules[ri];
+                    var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+                    while (ci < numChefs) {
+                        var slot = _simState[ri][ci];
+                        while (reci < 3) {
+                            var currentReci = reci++;
+                            if (!slot.chefId || !slot.chefObj || (slot.recipes[currentReci] && slot.recipes[currentReci].data)) {
+                                continue;
+                            }
+                            var usedRecipeIds = _getUsedRecipeIdsExcludingPosition(_simState, ri, ci, currentReci);
+                            var recipeRanking = _fastGetRecipeRanking(ri, ci, currentReci, _cachedConfig.forceDeepSearch ? 100 : 50, true);
+                            var selected = false;
+                            for (var rk = 0; rk < recipeRanking.length; rk++) {
+                                if (usedRecipeIds[recipeRanking[rk].recipeId]) continue;
+                                _applyRecipeSelection(ri, ci, currentReci, recipeRanking[rk]);
+                                selected = true;
+                                break;
+                            }
+                            if (!selected) {
+                                var fallbackRecipeId = _findFallbackRecipeId(ri, ci, currentReci, usedRecipeIds);
+                                if (fallbackRecipeId) {
+                                    _simSetRecipe(ri, ci, currentReci, fallbackRecipeId);
+                                }
+                            }
+                            if (finishYieldCtrl.shouldYield()) {
+                                setTimeout(_processNextEmptyRecipe, 0);
+                                return;
+                            }
+                        }
+                        ci++;
+                        reci = 0;
+                    }
+                    ri++;
+                    ci = 0;
+                    reci = 0;
+                }
+                if (typeof onDone === 'function') onDone();
+            }
+
+            setTimeout(_processNextEmptyRecipe, 0);
+        }
+
         var usedChefIds = {};
         for (var ri = 0; ri < _rules.length; ri++) {
             if (!_shouldProcessRule(ri)) continue;
@@ -6966,18 +7298,13 @@ var BanquetOptimizer = (function() {
 
         function _fillRecipesWithSkillCheck(ri, ci) {
             var chefObj = _simState[ri][ci].chefObj;
-            var usedRecipeIds = {};
-            var rule = _rules[ri];
-            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
-            for (var oci = 0; oci < numChefs; oci++) {
-                if (oci === ci) continue;
-                for (var oreci = 0; oreci < 3; oreci++) {
-                    var r = _simState[ri][oci].recipes[oreci];
-                    if (r && r.data) usedRecipeIds[r.data.recipeId] = true;
-                }
-            }
-
+            // 宴会菜谱唯一性跨所有参与贵客生效；不能只排除当前贵客的重复菜。
+            var usedRecipeIds = _getUsedRecipeIdsExcludingPosition(_simState, ri, ci, -1);
             var skills = ['stirfry', 'boil', 'knife', 'fry', 'bake', 'steam'];
+            var positionsToReplace = [];
+
+            // 先清除技法不合格菜，再把本位置仍有效的菜加入全局已用集；这样先修复的
+            // 空位不会抢走同一位置后续有效菜谱，也不会被旧的无效菜谱占住候选名额。
             for (var reci = 0; reci < 3; reci++) {
                 var currentRecipe = _simState[ri][ci].recipes[reci];
                 var needReplace = false;
@@ -6987,7 +7314,7 @@ var BanquetOptimizer = (function() {
                 } else if (chefObj) {
                     for (var sk = 0; sk < skills.length; sk++) {
                         var s = skills[sk];
-                        if (currentRecipe.data[s] > 0 && (!chefObj[s] || chefObj[s] < currentRecipe.data[s])) {
+                        if (currentRecipe.data[s] > 0 && (!chefObj[s + 'Val'] || chefObj[s + 'Val'] < currentRecipe.data[s])) {
                             needReplace = true;
                             break;
                         }
@@ -6996,30 +7323,144 @@ var BanquetOptimizer = (function() {
 
                 if (needReplace) {
                     _simState[ri][ci].recipes[reci] = {data: null, quantity: 0, max: 0};
-                    var recipeRanking = _fastGetRecipeRanking(ri, ci, reci, 50, true);
-                    for (var rk = 0; rk < recipeRanking.length; rk++) {
-                        var rd = recipeRanking[rk];
-                        if (usedRecipeIds[rd.recipeId]) continue;
-                        var canMake = true;
-                        if (chefObj && rd.data) {
-                            for (var skillIndex = 0; skillIndex < skills.length; skillIndex++) {
-                                var skillName = skills[skillIndex];
-                                if (rd.data[skillName] > 0 && (!chefObj[skillName] || chefObj[skillName] < rd.data[skillName])) {
-                                    canMake = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if (canMake) {
-                            _applyRecipeSelection(ri, ci, reci, rd);
-                            usedRecipeIds[rd.recipeId] = true;
-                            break;
-                        }
-                    }
+                    positionsToReplace.push(reci);
                 } else {
                     usedRecipeIds[currentRecipe.data.recipeId] = true;
                 }
             }
+
+            for (var positionIndex = 0; positionIndex < positionsToReplace.length; positionIndex++) {
+                var targetRecipeIndex = positionsToReplace[positionIndex];
+                var recipeRanking = _fastGetRecipeRanking(ri, ci, targetRecipeIndex, 50, true);
+                for (var rk = 0; rk < recipeRanking.length; rk++) {
+                    var rd = recipeRanking[rk];
+                    if (usedRecipeIds[rd.recipeId]) continue;
+                    var canMake = true;
+                    if (chefObj && rd.data) {
+                        for (var skillIndex = 0; skillIndex < skills.length; skillIndex++) {
+                            var skillName = skills[skillIndex];
+                            if (rd.data[skillName] > 0 && (!chefObj[skillName + 'Val'] || chefObj[skillName + 'Val'] < rd.data[skillName])) {
+                                canMake = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (canMake) {
+                        _applyRecipeSelection(ri, ci, targetRecipeIndex, rd);
+                        usedRecipeIds[rd.recipeId] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        function _getTotalSatietyDiff() {
+            var totalDiff = 0;
+            for (var ri = 0; ri < _rules.length; ri++) {
+                if (!_shouldProcessRule(ri)) continue;
+                var rule = _rules[ri];
+                if (!rule.Satiety) continue;
+                totalDiff += Math.abs(Math.round(_calcCurrentSatiety(ri)) - Math.round(rule.Satiety));
+            }
+            return totalDiff;
+        }
+
+        function _repairSatietyByPriority() {
+            var activeRules = [];
+            for (var ri = 0; ri < _rules.length; ri++) {
+                if (_shouldProcessRule(ri) && _rules[ri].Satiety) activeRules.push(ri);
+            }
+            if (!activeRules.length || _isAllSatietyOk()) return false;
+
+            var improved = false;
+            var maxPasses = 3;
+            for (var pass = 0; pass < maxPasses; pass++) {
+                var baseDiff = _getTotalSatietyDiff();
+                var baseScore = _fastCalcScore();
+                var bestState = null;
+                var bestDiff = baseDiff;
+                var bestScore = baseScore;
+
+                for (var ari = 0; ari < activeRules.length; ari++) {
+                    var ruleIndex = activeRules[ari];
+                    var rule = _rules[ruleIndex];
+                    var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+                    for (var ci = 0; ci < numChefs; ci++) {
+                        for (var reci = 0; reci < 3; reci++) {
+                            var currentRecipe = _simState[ruleIndex][ci].recipes[reci];
+                            if (!currentRecipe || !currentRecipe.data) continue;
+                            var candidates = _fastGetRecipeRanking(ruleIndex, ci, reci, 20, true);
+                            var savedSlot = _cloneSlotState(_simState[ruleIndex][ci]);
+                            for (var c = 0; c < candidates.length; c++) {
+                                if (_isSameRecipeSelection(ruleIndex, ci, reci, candidates[c])) continue;
+                                _applyRecipeSelection(ruleIndex, ci, reci, candidates[c]);
+                                var candidateDiff = _getTotalSatietyDiff();
+                                var candidateScore = _fastCalcScore();
+                                if (candidateDiff < bestDiff || (candidateDiff === bestDiff && candidateScore > bestScore)) {
+                                    bestDiff = candidateDiff;
+                                    bestScore = candidateScore;
+                                    bestState = _cloneSimState(_simState);
+                                }
+                                _restoreSlotState(ruleIndex, ci, savedSlot);
+                            }
+                        }
+                    }
+                }
+
+                if (!bestState || bestDiff >= baseDiff) break;
+                _simState = bestState;
+                _bestSimState = _cloneSimState(_simState);
+                _bestScore = bestScore;
+                improved = true;
+                if (bestDiff === 0) break;
+            }
+            return improved;
+        }
+
+        // 收尾修复可能用较低分菜谱换取饱食度或唯一性。修复完成后，在不改变
+        // 饱食度达标状态的前提下再做局部回补，避免直接把这部分可恢复分数丢掉。
+        function _refineFinalScoreWithSatiety() {
+            if (!_isAllSatietyOk()) return false;
+
+            var improved = false;
+            var maxPasses = _cachedConfig.forceDeepSearch ? 3 : 2;
+            var candidateCount = _cachedConfig.forceDeepSearch ? 36 : 20;
+            for (var pass = 0; pass < maxPasses; pass++) {
+                var baseScore = _fastCalcScore();
+                var bestScore = baseScore;
+                var bestState = null;
+
+                for (var ri = 0; ri < _rules.length; ri++) {
+                    if (!_shouldProcessRule(ri)) continue;
+                    var rule = _rules[ri];
+                    var numChefs = rule.IntentList ? rule.IntentList.length : 3;
+                    for (var ci = 0; ci < numChefs; ci++) {
+                        for (var reci = 0; reci < 3; reci++) {
+                            var currentRecipe = _simState[ri][ci].recipes[reci];
+                            if (!currentRecipe || !currentRecipe.data) continue;
+                            var savedSlot = _cloneSlotState(_simState[ri][ci]);
+                            var candidates = _fastGetRecipeRanking(ri, ci, reci, candidateCount, true);
+                            for (var c = 0; c < candidates.length; c++) {
+                                if (_isSameRecipeSelection(ri, ci, reci, candidates[c])) continue;
+                                _applyRecipeSelection(ri, ci, reci, candidates[c]);
+                                var score = _fastCalcScore();
+                                if (score > bestScore && _isAllSatietyOk()) {
+                                    bestScore = score;
+                                    bestState = _cloneSimState(_simState);
+                                }
+                                _restoreSlotState(ri, ci, savedSlot);
+                            }
+                        }
+                    }
+                }
+
+                if (!bestState) break;
+                _simState = bestState;
+                _bestSimState = _cloneSimState(bestState);
+                _bestScore = bestScore;
+                improved = true;
+            }
+            return improved;
         }
 
         function _runMissingChefRepair() {
@@ -7051,6 +7492,7 @@ var BanquetOptimizer = (function() {
                 var allChefs = posRule.chefs || [];
 
                 for (var iter = 0; iter < maxIterations; iter++) {
+                    var savedSlot = _cloneSlotState(_simState[pos.ri][pos.ci]);
                     var currentChefId = _simState[pos.ri][pos.ci].chefId;
                     var currentScore = _calcRuleScore(pos.ri, true);
                     var bestScore = currentScore;
@@ -7066,6 +7508,7 @@ var BanquetOptimizer = (function() {
                         if (usedChefIds[candidateId] && candidateId !== currentChefId) continue;
                         if (_cachedConfig.useGot && !allChefs[chefIdx].got) continue;
 
+                        _restoreSlotState(pos.ri, pos.ci, savedSlot);
                         _simSetChef(pos.ri, pos.ci, candidateId);
                         _fillRecipesWithSkillCheck(pos.ri, pos.ci);
                         var newScore = _calcRuleScore(pos.ri, true);
@@ -7085,6 +7528,7 @@ var BanquetOptimizer = (function() {
                         usedChefIds[currentChefId] = false;
                         usedChefIds[bestChefId] = true;
                     }
+                    _restoreSlotState(pos.ri, pos.ci, savedSlot);
                     _simSetChef(pos.ri, pos.ci, bestChefId);
                     for (var applyReci = 0; applyReci < 3; applyReci++) {
                         _simSetRecipe(pos.ri, pos.ci, applyReci, bestRecipes[applyReci]);
@@ -7150,7 +7594,9 @@ var BanquetOptimizer = (function() {
 
                 function _calcNextRuleScore() {
                     while (ri < _rules.length) {
-                        memTotal += _calcRuleScore(ri, true);
+                        if (_shouldProcessRule(ri)) {
+                            memTotal += _calcRuleScore(ri, true);
+                        }
                         ri++;
                         if (finishYieldCtrl.shouldYield()) {
                             setTimeout(_calcNextRuleScore, 0);
@@ -7161,6 +7607,10 @@ var BanquetOptimizer = (function() {
                     _logFinishStage('内存计分完成', {
                         memoryScore: memTotal
                     });
+                    if (!_isAllSatietyOk()) {
+                        _cleanupAndComplete(memTotal);
+                        return;
+                    }
                     _applyBestStateToSystemAsync();
                 }
 
@@ -7172,23 +7622,22 @@ var BanquetOptimizer = (function() {
             _logFinishStage('饱食度修复开始');
             _setProgressTarget(95);
             setTimeout(function() {
+                // 前序已完成非法、重复和空位修复；此处只调整饱食度，避免收尾反复改写方案。
                 if (!_isAllSatietyOk()) {
                     _bestSimState = _cloneSimState(_simState);
                     _bestScore = _fastCalcScore();
-                    _climbRecipes();
-                    _simState = _cloneSimState(_bestSimState);
-                    _climbRecipeSwap();
+                    _repairSatietyByPriority();
                 }
-
-                _repairFinalInvalidRecipesSequentially(function() {
-                    _repairFinalDuplicateRecipesSequentially(function() {
-                        _bestSimState = _cloneSimState(_simState);
-                        _logFinishStage('饱食度修复完成', {
-                            satietyOk: _isAllSatietyOk()
-                        });
-                        _calcFinalMemoryScoreAsync();
-                    });
+                _bestSimState = _cloneSimState(_simState);
+                var scoreBeforeRecovery = _fastCalcScore();
+                var scoreRecovered = _refineFinalScoreWithSatiety();
+                _logFinishStage('饱食度修复完成', {
+                    satietyOk: _isAllSatietyOk(),
+                    totalSatietyDiff: _getTotalSatietyDiff(),
+                    scoreBeforeRecovery: scoreBeforeRecovery,
+                    scoreAfterRecovery: scoreRecovered ? _bestScore : scoreBeforeRecovery
                 });
+                _calcFinalMemoryScoreAsync();
             }, 0);
         }
 
@@ -7221,7 +7670,10 @@ var BanquetOptimizer = (function() {
                     fixedPositions: fixedCount,
                     autoPoolEquipImproved: autoPoolEquipImproved
                 });
-                _runSatietyRepairAsync();
+                // 补齐厨师会新增菜谱，最后再跑一次全局去重，避免收尾重新引入重复菜。
+                _repairFinalDuplicateRecipesSequentially(function() {
+                    _fillFinalEmptyRecipesSequentially(_runSatietyRepairAsync);
+                });
             }, 0);
         }
 
@@ -7231,8 +7683,10 @@ var BanquetOptimizer = (function() {
             _logFinishStage('非法与重复菜修复开始');
             _repairFinalInvalidRecipesSequentially(function() {
                 _repairFinalDuplicateRecipesSequentially(function() {
-                    _logFinishStage('非法与重复菜修复完成');
-                    _runMissingChefRepairAsync();
+                    _fillFinalEmptyRecipesSequentially(function() {
+                        _logFinishStage('非法、重复与空位菜修复完成');
+                        _runMissingChefRepairAsync();
+                    });
                 });
             });
         }, 0);
@@ -7243,10 +7697,15 @@ var BanquetOptimizer = (function() {
      */
     function _applySimStateToSystem(simState) {
         for (var ri = 0; ri < simState.length; ri++) {
+            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < simState[ri].length; ci++) {
                 var slot = simState[ri][ci];
                 if (typeof setCustomChef === 'function') {
                     setCustomChef(ri, ci, slot.chefId || null);
+                }
+                // 先设厨具，再设菜谱；setCustomRecipe会读取当前厨具计算结果。
+                if (typeof setCustomEquip === 'function') {
+                    setCustomEquip(ri, ci, slot.equipObj && slot.equipObj.equipId ? slot.equipObj.equipId : null);
                 }
                 for (var reci = 0; reci < slot.recipes.length; reci++) {
                     if (typeof setCustomRecipe === 'function') {
@@ -7255,9 +7714,6 @@ var BanquetOptimizer = (function() {
                     if (slot.recipes[reci].data && typeof setCustomRecipeQuantity === 'function') {
                         setCustomRecipeQuantity(ri, ci, reci, slot.recipes[reci].quantity || 0);
                     }
-                }
-                if (typeof setCustomEquip === 'function') {
-                    setCustomEquip(ri, ci, slot.equipObj && slot.equipObj.equipId ? slot.equipObj.equipId : null);
                 }
             }
         }

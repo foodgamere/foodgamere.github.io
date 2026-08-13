@@ -538,36 +538,52 @@ var GuestRateCalculator = (function($) {
     function getCurrentTotalTimeSeconds() {
         var rule = calCustomRule && calCustomRule.rules && calCustomRule.rules[0];
         var custom = rule && rule.custom;
-        var rawTotalTime = 0;
-        var hasRecipe = false;
+        var totalTimeSeconds = calculateEffectiveOpenTimeSeconds(custom, rule);
 
-        if (custom) {
-            for (var c in custom) {
-                if (!custom.hasOwnProperty(c)) {
-                    continue;
-                }
-                var recipes = custom[c].recipes || [];
-                for (var r in recipes) {
-                    if (!recipes.hasOwnProperty(r)) {
-                        continue;
-                    }
-                    var recipe = recipes[r];
-                    if (recipe && recipe.data && recipe.totalTime) {
-                        rawTotalTime += recipe.totalTime;
-                        hasRecipe = true;
-                    }
-                }
-            }
-        }
-
-        if (hasRecipe && rule) {
-            var timePercentage = calculateCurrentTimePercentage(custom, rule);
-            return Math.ceil(+(rawTotalTime * timePercentage / 100).toFixed(2));
+        if (totalTimeSeconds > 0) {
+            return totalTimeSeconds;
         }
 
         var selectedSumText = $(".cal-custom-item:eq(0) .selected-sum").text() || "";
         var totalTimeMatch = selectedSumText.match(/总时间：([^\s]+)/);
         return totalTimeMatch ? parseTimeTextToSeconds(totalTimeMatch[1]) : 0;
+    }
+
+    /**
+     * 计算时间加成后的总开业时长，与计算器总时间的展示口径保持一致。
+     */
+    function calculateEffectiveOpenTimeSeconds(custom, rule) {
+        var rawTotalTime = 0;
+
+        if (!custom || !rule) {
+            return 0;
+        }
+
+        for (var c in custom) {
+            if (!custom.hasOwnProperty(c)) {
+                continue;
+            }
+            var recipes = custom[c].recipes || [];
+            for (var r in recipes) {
+                if (!recipes.hasOwnProperty(r)) {
+                    continue;
+                }
+                var recipe = recipes[r];
+                if (recipe && recipe.data && recipe.totalTime) {
+                    rawTotalTime += recipe.totalTime;
+                }
+            }
+        }
+
+        if (rawTotalTime <= 0) {
+            return 0;
+        }
+
+        return Math.ceil(+(rawTotalTime * calculateCurrentTimePercentage(custom, rule) / 100).toFixed(2));
+    }
+
+    function getNormalizedConditionType(skill) {
+        return skill && skill.conditionType ? String(skill.conditionType).replace(/^\s+|\s+$/g, '') : '';
     }
 
     function normalizeJadeRecipeValueMap(data) {
@@ -2308,7 +2324,7 @@ var GuestRateCalculator = (function($) {
     function calculateFields(custom, rule, starLevel, quantity, qualityLevel) {
         var result = {
             guestRate: 0,           // 贵客率
-            critRate: 100,          // 暴击率，初始100%
+            critRate: 100,          // 暴击期望，初始为 1 倍赠礼
             timePercentage: 100,    // 时间百分比，初始100%
             actualGuestRate: 0,     // 实际贵客率
             runeRate: 0,            // 符文率
@@ -2341,6 +2357,7 @@ var GuestRateCalculator = (function($) {
         
         // 统计 特技符文率(GuestAntiqueDropRate) 技能
         var guestAntiqueDropRateSkills = [];
+        var effectiveOpenTimeSeconds = calculateEffectiveOpenTimeSeconds(custom, rule);
         
         // 遍历所有场上厨师
         for (var c in custom) {
@@ -2501,10 +2518,10 @@ var GuestRateCalculator = (function($) {
                     }
                 }
                 
-                // ========== 计算暴击率 (GuestDropCount) ==========
+                // ========== 计算暴击期望 (GuestDropCount) ==========
                 // 计算厨师技能、修炼技能和厨具技能，不计算心法盘
                 if (skill.type === "GuestDropCount" && (source.type === 'chef' || source.type === 'ultimate' || source.type === 'equip')) {
-                    var conditionType = skill.conditionType;
+                    var conditionType = getNormalizedConditionType(skill);
                     
                     if (conditionType === "PerRank") {
                         // PerRank 类型：根据菜谱品级计算
@@ -2530,6 +2547,13 @@ var GuestRateCalculator = (function($) {
                         
                         var critIncrease = basePercent * qualifiedRecipeCount;
                         result.critRate += critIncrease;
+                    } else if (conditionType === "TimeHigher") {
+                        // 技能数据中可能带有前导空格，已在 getNormalizedConditionType 统一处理。
+                        // 只有时间加成后的总开业时长严格超过门槛时才生效。
+                        var timeThresholdSeconds = Number(skill.conditionValue) || 0;
+                        if (effectiveOpenTimeSeconds > timeThresholdSeconds) {
+                            result.critRate += Number(skill.value) || 0;
+                        }
                     } else {
                         // 非 PerRank 类型
                         var desc = source.desc || "";
@@ -2693,7 +2717,7 @@ var GuestRateCalculator = (function($) {
             var actualGuestRateRounded = Math.floor(result.actualGuestRate * 100) / 100;
             // 符文率是整数，不需要处理
             var runeRateValue = result.runeRate;
-            // 对暴击率截断取整保留两位小数
+            // 对暴击期望截断取整保留两位小数
             var critRateRounded = Math.floor(result.critRate * 100) / 100;
             
             // 使用处理后的值计算百锅产出
@@ -2729,7 +2753,7 @@ var GuestRateCalculator = (function($) {
     
     /**
      * 更新计算摘要显示
-     * 更新所有显示字段，包括贵客率、暴击率、时间等
+     * 更新所有显示字段，包括贵客率、暴击期望、时间等
      * @public
      * @param {Object} calCustomRule - 全局计算规则对象
      */
@@ -3008,12 +3032,16 @@ var GuestRateCalculator = (function($) {
                 }
             } else if (skill.type === 'GuestDropCount') {
                 var desc = source.desc || '';
-                if (skill.conditionType === 'PerRank') {
+                var conditionType = getNormalizedConditionType(skill);
+                if (conditionType === 'PerRank') {
                     var percentMatch = desc.match(/(\d+)%/);
                     if (percentMatch) {
                         var basePercent = parseInt(percentMatch[1]);
                         result.skillValues.crit += basePercent * 3;
                     }
+                } else if (conditionType === 'TimeHigher') {
+                    // 候选列表按满足开业时长条件后的理论贡献排序。
+                    result.skillValues.crit += Number(skill.value) || 0;
                 } else {
                     var percentMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%/);
                     if (percentMatch) {

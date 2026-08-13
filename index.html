@@ -21,13 +21,13 @@
     <script type="text/javascript" src="js/script.min.js?v=23"></script>
     <script type="text/javascript" src="js/common.min.js?v=77"></script>
     <link rel="stylesheet" type="text/css" href="css/food.min.css?v=81" />
-    <script type="text/javascript" src="js/guest.calculator.js?v=4"></script>
+    <script type="text/javascript" src="js/guest.calculator.js?v=5"></script>
     <script type="text/javascript" src="js/query.guest.js?v=3"></script>
-    <script type="text/javascript" src="js/food.min.js?v=282"></script>
+    <script type="text/javascript" src="js/food.min.js?v=283"></script>
     <script type="text/javascript" src="js/query.cultivate.js?v=4"></script>
     <script type="text/javascript" src="js/query.collection.js?v=5"></script>
     <script type="text/javascript" src="js/banquet.optimizer.js?v=3"></script>
-    <script type="text/javascript" src="js/jianghu.optimizer.js?v=5"></script>
+    <script type="text/javascript" src="js/jianghu.optimizer.js?v=12"></script>
     <script type="text/javascript" src="js/competition.optimizer.simple.js?v=3"></script>
     <link rel="stylesheet" type="text/css" href="css/image.css?v=175" />
     <link rel="stylesheet" type="text/css" href="css/query.collection.css?v=4" />
@@ -2273,7 +2273,7 @@
                                             <span class="value" id="guest-rate-value">0%</span>
                                         </div>
                                         <div class="calc-result-item">
-                                            <label>暴击率:</label>
+                                            <label>暴击期望:</label>
                                             <span class="value" id="total-crit-rate">100%</span>
                                         </div>
                                         <div class="calc-result-item">
@@ -2495,7 +2495,7 @@
                                             <span class="value" id="guest-rate-value-jade">0%</span>
                                         </div>
                                         <div class="calc-result-item">
-                                            <label>暴击率:</label>
+                                            <label>暴击期望:</label>
                                             <span class="value" id="total-crit-rate-jade">100%</span>
                                         </div>
                                         <div class="calc-result-item">
@@ -3419,6 +3419,7 @@
     var STORAGE_DEFAULT_INTERMEDIATE_EQUIP_KEY = 'competition_default_intermediate_equip';
     var STORAGE_BANQUET_NEWBIE_EQUIP_KEY = 'banquet_newbie_equip';
     var STORAGE_BANQUET_INTERMEDIATE_EQUIP_KEY = 'banquet_intermediate_equip';
+    var STORAGE_BANQUET_FORCE_DEEP_SEARCH_KEY = 'banquet_force_deep_search';
     var algorithmList = [];
     var activeAlgorithmId = null;
 
@@ -3673,6 +3674,20 @@
         } catch (e) {}
     }
 
+    function getBanquetForceDeepSearchEnabled() {
+        try {
+            return localStorage.getItem(STORAGE_BANQUET_FORCE_DEEP_SEARCH_KEY) === '1';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function setBanquetForceDeepSearchEnabled(enabled) {
+        try {
+            localStorage.setItem(STORAGE_BANQUET_FORCE_DEEP_SEARCH_KEY, enabled ? '1' : '0');
+        } catch (e) {}
+    }
+
     function syncBanquetNewbieEquipToggle() {
         var enabled = getBanquetNewbieEquipEnabled();
         $('#chk-banquet-newbie-equip').prop('checked', enabled);
@@ -3686,6 +3701,14 @@
         $('#chk-banquet-intermediate-equip').prop('checked', enabled);
         if ($('#chk-banquet-intermediate-equip').parent().hasClass('toggle')) {
             $('#chk-banquet-intermediate-equip').bootstrapToggle(enabled ? 'on' : 'off');
+        }
+    }
+
+    function syncBanquetForceDeepSearchToggle() {
+        var enabled = getBanquetForceDeepSearchEnabled();
+        $('#chk-banquet-force-deep-search').prop('checked', enabled);
+        if ($('#chk-banquet-force-deep-search').parent().hasClass('toggle')) {
+            $('#chk-banquet-force-deep-search').bootstrapToggle(enabled ? 'on' : 'off');
         }
     }
 
@@ -3712,6 +3735,7 @@
     window.getCompetitionDefaultIntermediateEquipEnabled = getDefaultIntermediateEquipEnabled;
     window.getBanquetNewbieEquipEnabled = getBanquetNewbieEquipEnabled;
     window.getBanquetIntermediateEquipEnabled = getBanquetIntermediateEquipEnabled;
+    window.getBanquetForceDeepSearchEnabled = getBanquetForceDeepSearchEnabled;
     window.isDefaultCompetitionMode = isDefaultCompetitionMode;
 
     function isJianghuOrXiankeRule() {
@@ -3822,6 +3846,13 @@
                     '</div>' +
                     '<input type="checkbox" id="chk-banquet-intermediate-equip" data-toggle="toggle" data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="56px">' +
                 '</div>' +
+                '<div style="margin-top: 16px; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">' +
+                    '<div>' +
+                        '<div style="font-weight: bold; font-size: 14px;">强制深度搜索</div>' +
+                        '<div style="font-size: 12px; color: #888; margin-top: 4px;">扩大候选池并关闭轻量剪枝；计算耗时会明显增加</div>' +
+                    '</div>' +
+                    '<input type="checkbox" id="chk-banquet-force-deep-search" data-toggle="toggle" data-on="开" data-off="关" data-onstyle="default" data-size="small" data-width="56px">' +
+                '</div>' +
             '</div>' +
         '</div>';
         $('body').append(banquetModalHtml);
@@ -3832,6 +3863,7 @@
             $('#chk-competition-default-intermediate-equip').bootstrapToggle();
             $('#chk-banquet-newbie-equip').bootstrapToggle();
             $('#chk-banquet-intermediate-equip').bootstrapToggle();
+            $('#chk-banquet-force-deep-search').bootstrapToggle();
         }
     }
 
@@ -3894,6 +3926,7 @@
             }
             syncBanquetNewbieEquipToggle();
             syncBanquetIntermediateEquipToggle();
+            syncBanquetForceDeepSearchToggle();
             $('#banquet-settings-modal').css('display', 'flex');
         });
 
@@ -4014,6 +4047,10 @@
 
         $(document).on('change', '#chk-banquet-intermediate-equip', function() {
             setBanquetIntermediateEquipEnabled($(this).prop('checked'));
+        });
+
+        $(document).on('change', '#chk-banquet-force-deep-search', function() {
+            setBanquetForceDeepSearchEnabled($(this).prop('checked'));
         });
 
         $(document).on('click', '#btn-export-current-algorithm', function() {

@@ -44,18 +44,11 @@
  *    b. 爬山后跳过检查：
  *       - 爬山无改进且 < 全局最佳90% → 跳过深度搜索
  *       - 即使有改进，< 全局最佳88% → 也跳过（差距太大）
- *       - 90%-95%之间的"边界种子"：轻量深度搜索（1轮跨贵客，跳过重建）
- *    c. 跨贵客重分配（_crossGuestReassign）：最多2轮
- *       - 方案A：清空目标贵客，用意图感知重新填充 + 精调
- *         少菜谱(<=800)用完整精调，多菜谱用轻量
- *       - 方案B：对目标贵客每个位置，尝试top5种子菜谱替换 + 精调
- *         少菜谱用2轮精调，多菜谱用轻量
- *       - 后补偿：如果跨贵客有改进，做一次完整精调弥补轻量模式的精度损失
- *    d. 整贵客重建（_fullGuestRebuild）：
- *       - 仅在跨贵客有改进时才执行（条件执行）
- *       - 厨师候选数限制为5（原10）
- *    e. 最终爬山+交换：
- *       - 仅在前面阶段有改进时执行（条件执行）
+ *       - 90%-95%之间的"边界种子"：只执行最终菜谱交换
+ *    c. 单贵客重建（_rebuildSingleGuest）：
+ *       - 按不同首厨师重新构造整套菜谱，再做轻量精调
+ *    d. 最终爬山+交换：
+ *       - 重建或交换带来改进时执行（条件执行）
  * 
  * 7. 种子间优化：
  *    - 收敛提前终止：如果某种子最终分数与之前某种子完全相同，跳过剩余种子
@@ -70,13 +63,13 @@
  * - preFilterTop: 50   预过滤候选数
  * 
  * === 自适应阈值 ===
- * - 菜谱总数 > 800：跨贵客用轻量精调（方案A: true, 方案B: true）
- * - 菜谱总数 <= 800：跨贵客用深度精调（方案A: false完整, 方案B: 2轮）
+ * - 菜谱总数 > 800：用轻量精调（方案A: true, 方案B: true）
+ * - 菜谱总数 <= 800：用深度精调（方案A: false完整, 方案B: 2轮）
  * - 种子初始化精调同理（>800轻量，<=800完整）
  * 
  * 
  * === 分数提升的主要来源 ===
- * - 跨贵客重分配：把好厨师/菜谱从一个贵客移到另一个
+ * - 厨师与菜谱的联合重排：寻找更高分且更省食材的搭配
  * - 菜谱交换：同贵客内不同位置的菜谱互换
  * - 意图感知种子选择：利用意图链条找到高分起点
  */
@@ -91,7 +84,6 @@ var JianghuOptimizer = (function() {
     var _rules = [];
     var _bestScore = 0;
     var _bestStateInfo = null;
-    var _guestFilter = null;
 
     var CONFIG = {
         recipeSeedK: 5,       // 种子菜谱数
@@ -101,7 +93,10 @@ var JianghuOptimizer = (function() {
         refineIter: 5,       // 精调迭代轮数
         perturbRounds: 30,   // 扰动重建轮数（随机扰动补充用）
         perturbPositions: 2, // 每轮扰动位置数
-        preFilterTop: 50     // 预过滤候选数
+        preFilterTop: 50,    // 预过滤候选数
+        materialSeedCount: 12,
+        materialRecipeCandidates: 10,
+        materialRefinePasses: 2
     };
 
     // ==================== 江湖帖档位分数数据 ====================
@@ -270,12 +265,8 @@ var JianghuOptimizer = (function() {
             var currentSatiety = _calcCurrentSatiety(ri);
             var targetSatiety = rule.Satiety;
             
-            // 四舍五入到整数进行比较（因为饱食度可能是浮点数）
-            var currentRounded = Math.round(currentSatiety);
-            var targetRounded = Math.round(targetSatiety);
-            
-            // 必须完全相等才算达标（取整后比较）
-            if (currentRounded !== targetRounded) {
+            // 与 calSatiety / getSatietyPercent 一致：只有精确命中才会获得达标加成。
+            if (currentSatiety !== targetSatiety) {
                 return false;
             }
         }
@@ -293,9 +284,7 @@ var JianghuOptimizer = (function() {
             
             var currentSatiety = _calcCurrentSatiety(ri);
             var targetSatiety = rule.Satiety;
-            var currentRounded = Math.round(currentSatiety);
-            var targetRounded = Math.round(targetSatiety);
-            var diff = Math.abs(currentRounded - targetRounded);
+            var diff = Math.abs(currentSatiety - targetSatiety);
             
             // 如果任何一个贵客的差值>2，认为不可接受
             if (diff > 2) {
@@ -348,7 +337,6 @@ var JianghuOptimizer = (function() {
         var materialUsageTotal = 0;
 
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (!_shouldProcessRule(ri)) continue;
             satGapTotal += _calcRuleSatietyGap(ri);
             materialUsageTotal += _calcRuleMaterialUsage(ri);
         }
@@ -363,7 +351,8 @@ var JianghuOptimizer = (function() {
             totalQuantity: _calcTotalQuantity(_simState),
             targetShortfall: targetShortfall,
             overshoot: overshoot,
-            feasible: _targetScore ? (targetShortfall === 0 && satGapTotal === 0) : true
+            // 无论是否设置目标分，饱食度都是江湖帖结果可写回的硬约束。
+            feasible: satGapTotal === 0 && (!_targetScore || targetShortfall === 0)
         };
     }
 
@@ -371,9 +360,9 @@ var JianghuOptimizer = (function() {
         if (!candidate) return false;
         if (!baseline) return true;
 
-        if (_targetScore) {
-            if (candidate.feasible !== baseline.feasible) return candidate.feasible;
+        if (candidate.feasible !== baseline.feasible) return candidate.feasible;
 
+        if (_targetScore) {
             if (candidate.feasible && baseline.feasible) {
                 if (candidate.materialUsageTotal !== baseline.materialUsageTotal) {
                     return candidate.materialUsageTotal < baseline.materialUsageTotal;
@@ -411,6 +400,11 @@ var JianghuOptimizer = (function() {
             return false;
         }
 
+        if (!candidate.feasible && !baseline.feasible) {
+            if (candidate.satGapTotal !== baseline.satGapTotal) {
+                return candidate.satGapTotal < baseline.satGapTotal;
+            }
+        }
         if (candidate.score !== baseline.score) return candidate.score > baseline.score;
         if (candidate.materialUsageTotal !== baseline.materialUsageTotal) {
             return candidate.materialUsageTotal < baseline.materialUsageTotal;
@@ -439,31 +433,52 @@ var JianghuOptimizer = (function() {
     }
 
     /**
-     * 精确计算某个rule当前总食材消耗（基于实际菜谱份数和厨师减耗）
+     * 计算当前方案的实际食材消耗。
+     * 江湖帖没有共享食材库存限制；这里仅作为省食材目标统计每道菜的实际耗材。
      */
     function _calcRuleMaterialUsage(ruleIndex) {
         var rule = _rules[ruleIndex];
         var ruleState = _simState[ruleIndex];
-        if (!rule || !rule.materials || !ruleState) return 0;
+        if (!rule || !ruleState) return 0;
 
-        var remainMaterials = JSON.parse(JSON.stringify(rule.materials));
+        var used = 0;
         for (var ci = 0; ci < ruleState.length; ci++) {
             for (var reci = 0; reci < 3; reci++) {
                 var rec = ruleState[ci].recipes[reci];
-                if (rec && rec.data && rec.quantity > 0) {
-                    updateMaterialsData(remainMaterials, rec, rec.quantity, ruleState[ci].chefObj);
+                if (!rec || !rec.data || rec.quantity <= 0 || !rec.data.materials) continue;
+                for (var mi = 0; mi < rec.data.materials.length; mi++) {
+                    var material = rec.data.materials[mi];
+                    used += calMaterialReduce(
+                        ruleState[ci].chefObj,
+                        material.material,
+                        material.quantity
+                    ) * rec.quantity;
                 }
             }
         }
+        return used;
+    }
 
+    function _calcRecipeMaterialUsage(recipeData, chefObj) {
+        if (!recipeData || !recipeData.materials) return 0;
         var used = 0;
-        for (var mi = 0; mi < remainMaterials.length; mi++) {
-            var initQty = Number(rule.materials[mi].quantity) || 0;
-            var remainQty = Number(remainMaterials[mi].quantity) || 0;
-            var consumed = initQty - remainQty;
-            if (consumed > 0) used += consumed;
+        for (var mi = 0; mi < recipeData.materials.length; mi++) {
+            var material = recipeData.materials[mi];
+            used += calMaterialReduce(chefObj, material.material, material.quantity);
         }
         return used;
+    }
+
+    function _canChefMakeRecipe(chefObj, recipeData) {
+        if (!chefObj || !chefObj.chefId || !recipeData) return true;
+        var skills = ['stirfry', 'boil', 'knife', 'fry', 'bake', 'steam'];
+        for (var i = 0; i < skills.length; i++) {
+            var skill = skills[i];
+            if (recipeData[skill] > 0 && (!chefObj[skill + 'Val'] || chefObj[skill + 'Val'] < recipeData[skill])) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -482,7 +497,7 @@ var JianghuOptimizer = (function() {
             }
         }
 
-        return Math.abs(Math.round(satTotal) - Math.round(rule.Satiety));
+        return Math.abs(satTotal - Number(rule.Satiety));
     }
 
     function init(gameData) {
@@ -498,8 +513,9 @@ var JianghuOptimizer = (function() {
         _bestSimState = null;
         _topCandidates = [];
         
-        if (typeof calCustomRule !== 'undefined' && calCustomRule && calCustomRule.rules) {
-            _rules = calCustomRule.rules;
+        if (typeof calCustomRule !== 'undefined' && calCustomRule && calCustomRule.rules && calCustomRule.rules[0]) {
+            // 江湖帖固定只有一个贵客，避免把风云宴的多贵客状态带入本算法。
+            _rules = [calCustomRule.rules[0]];
         }
         
         if (_rules.length === 0) {
@@ -574,7 +590,7 @@ var JianghuOptimizer = (function() {
                     }
                     // 过滤调料
                     if (_cachedConfig.recipeCondiment.length > 0 && _cachedConfig.recipeCondiment.indexOf(rd.condiment) < 0) continue;
-                    // 过滤排除食材
+                    // 排除食材只用于排除候选菜谱，不作为江湖帖的全局库存限制。
                     if (typeof window.isRecipeExcludedByMaterialRules === 'function'
                         && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                     menus.push(rd);
@@ -588,11 +604,6 @@ var JianghuOptimizer = (function() {
     }
 
     // ==================== 模拟状态管理 ====================
-
-    function _shouldProcessRule(ruleIndex) {
-        if (_guestFilter === null) return true;
-        return ruleIndex === _guestFilter;
-    }
 
     /**
      * 初始化模拟状态（从系统当前状态读取，或创建空状态）
@@ -636,6 +647,14 @@ var JianghuOptimizer = (function() {
             clone.push(ruleClone);
         }
         return clone;
+    }
+
+    function _cloneSlotState(slot) {
+        return _cloneSimState([[slot]])[0][0];
+    }
+
+    function _restoreSlotState(ruleIndex, chefIndex, savedSlot) {
+        _simState[ruleIndex][chefIndex] = _cloneSlotState(savedSlot);
     }
 
     /**
@@ -684,14 +703,29 @@ var JianghuOptimizer = (function() {
         
         // 调用 setDataForChef 计算厨师属性值（这是纯计算函数，不操作DOM）
         _applyChefData(ruleIndex);
+        // 厨师的减材和技法会改变每道菜自身的可做份数；保留当前实际份数上限内的值。
+        _refreshRecipeQuantitiesForSlot(ruleIndex, chefIndex);
+    }
+
+    function _refreshRecipeQuantitiesForSlot(ruleIndex, chefIndex) {
+        var slot = _simState[ruleIndex][chefIndex];
+        var rule = _rules[ruleIndex];
+        if (!slot || !slot.chefObj || !rule) return;
+        for (var reci = 0; reci < slot.recipes.length; reci++) {
+            var rec = slot.recipes[reci];
+            if (!rec || !rec.data) continue;
+            var maxQty = getRecipeQuantity(rec.data, rule.materials, rule, slot.chefObj);
+            if (rule.DisableMultiCookbook) maxQty = Math.min(maxQty, 1);
+            rec.max = maxQty;
+            rec.quantity = Math.min(rec.quantity, maxQty);
+        }
     }
 
     /**
      * 在模拟状态中设置菜谱（纯内存）
-     * 修复：计算份数时扣除同rule内其他已选菜谱的食材消耗，匹配系统setCustomRecipe逻辑
-     * preRemainMaterials: 可选，预计算的剩余食材池（避免重复计算）
+     * 江湖帖的菜谱份数只受菜谱自身上限影响，不扣除其他菜谱的食材消耗。
      */
-    function _simSetRecipe(ruleIndex, chefIndex, recipeIndex, recipeId, preRemainMaterials, desiredQty) {
+    function _simSetRecipe(ruleIndex, chefIndex, recipeIndex, recipeId, desiredQty) {
         var slot = _simState[ruleIndex][chefIndex];
         if (!recipeId) {
             slot.recipes[recipeIndex] = {data: null, quantity: 0, max: 0};
@@ -716,16 +750,8 @@ var JianghuOptimizer = (function() {
         
         var rule = _rules[ruleIndex];
         
-        // 构建扣除其他已选菜谱食材后的剩余食材池（匹配setCustomRecipe逻辑）
-        var remainMaterials;
-        if (preRemainMaterials) {
-            remainMaterials = preRemainMaterials;
-        } else {
-            remainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
-        }
-        
-        // 用剩余食材计算份数
-        var maxQty = getRecipeQuantity(recipeData, remainMaterials, rule, slot.chefObj);
+        // 使用页面同样的单菜可做份数计算。
+        var maxQty = getRecipeQuantity(recipeData, rule.materials, rule, slot.chefObj);
         if (rule.DisableMultiCookbook) maxQty = Math.min(maxQty, 1);
         var qty;
         if (desiredQty == null) {
@@ -735,25 +761,6 @@ var JianghuOptimizer = (function() {
         }
         
         slot.recipes[recipeIndex] = {data: recipeData, quantity: qty, max: maxQty};
-    }
-
-    /**
-     * 计算某个rule中排除指定位置后的剩余食材
-     */
-    function _calcRemainMaterials(ruleIndex, excludeChef, excludeRecipe) {
-        var rule = _rules[ruleIndex];
-        var remainMaterials = JSON.parse(JSON.stringify(rule.materials));
-        var ruleState = _simState[ruleIndex];
-        for (var ci = 0; ci < ruleState.length; ci++) {
-            for (var ri = 0; ri < 3; ri++) {
-                if (ci === excludeChef && ri === excludeRecipe) continue;
-                var rec = ruleState[ci].recipes[ri];
-                if (rec.data && rec.quantity > 0) {
-                    updateMaterialsData(remainMaterials, rec, rec.quantity, ruleState[ci].chefObj);
-                }
-            }
-        }
-        return remainMaterials;
     }
 
     /**
@@ -805,18 +812,7 @@ var JianghuOptimizer = (function() {
         
         if (applyChef !== false) _applyChefData(ruleIndex);
         
-        // 匹配calCustomResults — setDataForChef后重新计算max并限制quantity
-        for (var ci = 0; ci < ruleState.length; ci++) {
-            for (var reci = 0; reci < 3; reci++) {
-                var rec = ruleState[ci].recipes[reci];
-                if (rec.data) {
-                    var recipeMax = getRecipeQuantity(rec.data, rule.materials, rule, ruleState[ci].chefObj);
-                    if (rule.DisableMultiCookbook) recipeMax = Math.min(recipeMax, 1);
-                    rec.max = recipeMax;
-                    if (rec.quantity > recipeMax) rec.quantity = recipeMax;
-                }
-            }
-        }
+        _refreshRuleRecipeLimits(ruleIndex);
         
         var customArr = [];
         for (var ci = 0; ci < ruleState.length; ci++) {
@@ -894,6 +890,29 @@ var JianghuOptimizer = (function() {
     }
 
     /**
+     * 刷新每道菜自身的可做份数，保持与江湖帖页面结算一致。
+     */
+    function _refreshRuleRecipeLimits(ruleIndex) {
+        var rule = _rules[ruleIndex];
+        var ruleState = _simState[ruleIndex];
+        if (!rule || !ruleState) return;
+
+        for (var ci = 0; ci < ruleState.length; ci++) {
+            for (var reci = 0; reci < 3; reci++) {
+                var rec = ruleState[ci].recipes[reci];
+                if (!rec || !rec.data) continue;
+
+                var recipeMax = getRecipeQuantity(rec.data, rule.materials, rule, ruleState[ci].chefObj);
+                if (rule.DisableMultiCookbook) recipeMax = Math.min(recipeMax, 1);
+                rec.max = recipeMax;
+                if (rec.quantity > recipeMax) {
+                    rec.quantity = recipeMax;
+                }
+            }
+        }
+    }
+
+    /**
      * 内存计算总分
      */
     function _fastCalcScore() {
@@ -958,9 +977,7 @@ var JianghuOptimizer = (function() {
             }
         } else {
             // 有菜谱时，计算每个厨师的得分
-            var savedChefObj = ruleState[chefIndex].chefObj;
-            var savedChefId = ruleState[chefIndex].chefId;
-            var savedEquipObj = ruleState[chefIndex].equipObj;
+            var savedSlot = _cloneSlotState(ruleState[chefIndex]);
 
             var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
             var preferMaterialUsage = (_targetScore && _targetScore > 0);
@@ -971,7 +988,8 @@ var JianghuOptimizer = (function() {
                 // 跳过已用厨师（快速排名时不需要评估已用的）
                 if (fastMode && usedChefIds[chef.chefId]) continue;
 
-                // 临时设置厨师
+                // 每名候选均从同一完整位置状态开始，避免前一名厨师的份数收缩污染排名。
+                _restoreSlotState(ruleIndex, chefIndex, savedSlot);
                 _simSetChef(ruleIndex, chefIndex, chef.chefId);
 
                 // 检查技法是否足够
@@ -993,10 +1011,10 @@ var JianghuOptimizer = (function() {
                 }
 
                 var score = calcFn();
-                var satGap = preferMaterialUsage ? _calcRuleSatietyGap(ruleIndex) : 0;
+                var satGap = _calcRuleSatietyGap(ruleIndex);
                 var materialUsage = preferMaterialUsage ? _calcRuleMaterialUsage(ruleIndex) : 0;
                 var targetShortfall = preferMaterialUsage ? Math.max(0, _targetScore - score) : 0;
-                var feasible = preferMaterialUsage ? (targetShortfall === 0 && satGap === 0) : true;
+                var feasible = satGap === 0 && (!preferMaterialUsage || targetShortfall === 0);
                 var overshoot = preferMaterialUsage && score >= _targetScore ? (score - _targetScore) : Infinity;
 
                 results.push({
@@ -1013,13 +1031,11 @@ var JianghuOptimizer = (function() {
             }
 
             // 恢复原厨师
-            ruleState[chefIndex].chefId = savedChefId;
-            ruleState[chefIndex].chefObj = savedChefObj;
-            ruleState[chefIndex].equipObj = savedEquipObj;
+            _restoreSlotState(ruleIndex, chefIndex, savedSlot);
             _applyChefData(ruleIndex);
         }
 
-        var preferMaterialUsageSort = (_targetScore && _targetScore > 0);
+        var preferMaterialUsageSort = true;
         results.sort(function(a, b) {
             if (preferMaterialUsageSort) {
                 if (a.feasible !== b.feasible) return a.feasible ? -1 : 1;
@@ -1108,9 +1124,6 @@ var JianghuOptimizer = (function() {
         var slotPartialAdds = basePartialAdds[slotIdx];
         var slotIntentAdds = baseIntentAdds[slotIdx];
         
-        // 预计算剩余食材（排除当前位置）
-        var preRemainMaterials = _calcRemainMaterials(ruleIndex, chefIndex, recipeIndex);
-        
         // ===== 第一阶段：固定intentAdds粗排（全部菜谱） =====
         var phase1 = [];
         
@@ -1128,7 +1141,7 @@ var JianghuOptimizer = (function() {
                 if (rd.steam > 0 && (!chefObj.steamVal || chefObj.steamVal < rd.steam)) continue;
             }
             
-            var maxQty = getRecipeQuantity(rd, preRemainMaterials, rule, chefObj);
+            var maxQty = getRecipeQuantity(rd, rule.materials, rule, chefObj);
             if (rule.DisableMultiCookbook) maxQty = Math.min(maxQty, 1);
             var qty = _getRecipeInitialQuantity(maxQty, activeQuantityMode);
             
@@ -1212,7 +1225,16 @@ var JianghuOptimizer = (function() {
             // 将加成权重转换为等效分数（权重*10作为加分）
             var estWithBonus = est + bonusWeight * 10;
             
-            phase1.push({rd: rd, qty: qty, est: est, estWithBonus: estWithBonus, bonusWeight: bonusWeight});
+            var materialUsage = _calcRecipeMaterialUsage(rd, chefObj);
+            phase1.push({
+                rd: rd,
+                qty: qty,
+                est: est,
+                estWithBonus: estWithBonus,
+                bonusWeight: bonusWeight,
+                materialUsage: materialUsage,
+                materialEfficiency: est / Math.max(materialUsage, 1)
+            });
         }
         
         phase1.sort(function(a, b) { return b.estWithBonus - a.estWithBonus; });
@@ -1233,7 +1255,34 @@ var JianghuOptimizer = (function() {
             phase1Top = Math.max(topK || 10, CONFIG.preFilterTop, 40);
             phase2Size = 15;
         }
-        if (phase1.length > phase1Top) phase1.length = phase1Top;
+        if (_targetScore && phase1.length > phase1Top) {
+            // 省食材模式不能只保留高分菜谱。额外保留低耗材和高分/耗材比候选，
+            // 避免它们在粗排阶段被截断后永远无法参与实际总耗材比较。
+            var scoreCandidates = phase1.slice(0, phase1Top);
+            var lowMaterialCandidates = phase1.slice().sort(function(a, b) {
+                if (a.materialUsage !== b.materialUsage) return a.materialUsage - b.materialUsage;
+                return b.estWithBonus - a.estWithBonus;
+            }).slice(0, CONFIG.materialRecipeCandidates);
+            var efficientCandidates = phase1.slice().sort(function(a, b) {
+                if (a.materialEfficiency !== b.materialEfficiency) return b.materialEfficiency - a.materialEfficiency;
+                return b.estWithBonus - a.estWithBonus;
+            }).slice(0, CONFIG.materialRecipeCandidates);
+            var selected = {};
+            phase1 = [];
+            var candidateGroups = [scoreCandidates, lowMaterialCandidates, efficientCandidates];
+            for (var groupIndex = 0; groupIndex < candidateGroups.length; groupIndex++) {
+                for (var candidateIndex = 0; candidateIndex < candidateGroups[groupIndex].length; candidateIndex++) {
+                    var candidate = candidateGroups[groupIndex][candidateIndex];
+                    if (!selected[candidate.rd.recipeId]) {
+                        selected[candidate.rd.recipeId] = true;
+                        phase1.push(candidate);
+                    }
+                }
+            }
+            phase1.sort(function(a, b) { return b.estWithBonus - a.estWithBonus; });
+        } else if (phase1.length > phase1Top) {
+            phase1.length = phase1Top;
+        }
         
         // ===== 第二阶段：逐候选重算intentAdds精排 =====
         // 仅当位置有依赖菜谱属性的意图时才执行Phase2
@@ -1300,6 +1349,7 @@ var JianghuOptimizer = (function() {
             
             phase2.sort(function(a, b) { return b.est - a.est; });
             var maxCandidates = Math.max(topK || 10, CONFIG.preFilterTop);
+            if (_targetScore) maxCandidates += CONFIG.materialRecipeCandidates * 2;
             if (phase2.length > maxCandidates) phase2.length = maxCandidates;
         } else {
             _timeStats.phase2Skipped = (_timeStats.phase2Skipped || 0) + 1;
@@ -1314,7 +1364,7 @@ var JianghuOptimizer = (function() {
         var calcFn = fastMode ? function() { return _fastCalcRuleScore(ruleIndex); } : _fastCalcScore;
         
         for (var i = 0; i < phase2.length; i++) {
-            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, phase2[i].rd.recipeId, preRemainMaterials, null);
+            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, phase2[i].rd.recipeId);
             var score = calcFn();
             var resultInfo = _targetScore ? _buildCurrentStateInfo(score) : null;
             results.push({recipeId: phase2[i].rd.recipeId, score: score, info: resultInfo});
@@ -2684,7 +2734,7 @@ var JianghuOptimizer = (function() {
     function _generateInitialSolutionAsync(onProgress, onDone) {
         var activeRules = [];
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (_shouldProcessRule(ri)) activeRules.push(ri);
+            activeRules.push(ri);
         }
         
         var candidates = [];
@@ -2917,12 +2967,6 @@ var JianghuOptimizer = (function() {
                             label: gName + '位置' + (seedPos+1) + '@pos' + (seedRecipeIdx+1) + ' ' + seedRecipeName + '+' + chefName
                         });
                         
-                        // 候选生成后检查：分数达标且饱食度达标时提前结束
-                        if (_targetScore && score >= _targetScore && _isAllSatietyOk()) {
-                            _finishInitialization(candidates, activeRules, onDone);
-                            return;
-                        }
-                        
                         completedSubSteps++;
                     }
                     
@@ -3005,12 +3049,6 @@ var JianghuOptimizer = (function() {
                                 label: gName + '协同pos' + (synSeedPos+1) + ' ' + sp.chefName + '+' + sp.recipeName + '(syn:' + sp.synergyScore.toFixed(0) + ')'
                             });
                             
-                            // 协同种子检查：分数达标且饱食度达标时提前结束
-                            if (_targetScore && synScore >= _targetScore && _isAllSatietyOk()) {
-                                _finishInitialization(candidates, activeRules, onDone);
-                                return;
-                            }
-                            
                             // 协同种子每个位置完成后更新子步进度
                             completedSubSteps++;
                         }
@@ -3082,11 +3120,6 @@ var JianghuOptimizer = (function() {
                             info: _buildCurrentStateInfo(auraScore),
                             label: gName + '光环(' + auraChef.chefName + ')pos' + (auraPos+1)
                         });
-                        
-                        if (_targetScore && auraScore >= _targetScore && _isAllSatietyOk()) {
-                            _finishInitialization(candidates, activeRules, onDone);
-                            return;
-                        }
                         
                         completedSubSteps++;
                     }
@@ -3352,12 +3385,6 @@ var JianghuOptimizer = (function() {
                             label: gName + '多技法(' + comboSkillNames + ')pos' + (msPos+1)
                         });
                         
-                        // 检查是否达标
-                        if (_targetScore && msScore >= _targetScore && _isAllSatietyOk()) {
-                            _finishInitialization(candidates, activeRules, onDone);
-                            return;
-                        }
-                        
                         completedSubSteps++;
                     }
                     
@@ -3379,8 +3406,8 @@ var JianghuOptimizer = (function() {
     }
     
     /**
-     * 初始化完成：排序候选、精调、选出最佳
-     * 候选已达标时跳过精调直接返回
+     * 初始化完成：保留多个种子并全部精调。
+     * 目标分模式不能因首个达标方案提前停止，否则后续低耗材方案没有比较机会。
      */
     function _finishInitialization(candidates, activeRules, onDone) {
         candidates.sort(function(a, b) {
@@ -3391,123 +3418,31 @@ var JianghuOptimizer = (function() {
             return b.score - a.score;
         });
         
-        for (var t = 0; t < Math.min(5, candidates.length); t++) {
+        _topCandidates = [];
+        if (candidates.length === 0) {
+            if (typeof onDone === 'function') onDone();
+            return;
         }
-        
-        if (candidates.length > 0) {
-            _topCandidates = [];
-            var numTop = Math.min(5, candidates.length);
-            for (var t = 0; t < numTop; t++) {
-                _topCandidates.push(_cloneSimState(candidates[t].state));
+
+        var numTop = Math.min(_targetScore ? CONFIG.materialSeedCount : 5, candidates.length);
+        var bestInfo = null;
+        var bestState = null;
+        for (var t = 0; t < numTop; t++) {
+            _simState = _cloneSimState(candidates[t].state);
+            _quickRefineFast(activeRules, _targetScore ? false : 1);
+            var score = _fastCalcScore();
+            var info = _buildCurrentStateInfo(score);
+            var state = _cloneSimState(_simState);
+            _topCandidates.push(state);
+            if (_isStateInfoBetter(info, bestInfo)) {
+                bestInfo = info;
+                bestState = state;
             }
-            
-            // 候选分数达标时的处理
-            if (_targetScore && candidates[0].info && candidates[0].info.feasible) {
-                _simState = _cloneSimState(_topCandidates[0]);
-                _forceBestFromCurrent(candidates[0].score);
-                
-                if (_isAllSatietyOk()) {
-                    // 分数和饱食度都达标，直接返回
-                    if (typeof onDone === 'function') onDone();
-                    return;
-                } else {
-                    // 分数达标但饱食度不达标
-                    if (_isSatietyDiffAcceptable()) {
-                        // 饱食度差值<=2，执行爬山优化
-                        _runClimbingPhase(0, function() {
-                            // 爬山后再次检查
-                            if (_isTargetReachedWithSatiety()) {
-                                // 达标则返回
-                                if (typeof onDone === 'function') onDone();
-                                return;
-                            }
-                            // 不达标则继续精调流程
-                            _continueRefineProcess();
-                        });
-                        return;
-                    } else {
-                        // 饱食度差值>2，跳过爬山，直接继续精调流程
-                        _continueRefineProcess();
-                        return;
-                    }
-                }
-            }
-            
-            // 分数未达标，继续精调
-            _continueRefineProcess();
-            
-            function _continueRefineProcess() {
-            
-            _simState = candidates[0].state;
-            var activeRulesForRefine = [];
-            for (var ri = 0; ri < _rules.length; ri++) {
-                if (_shouldProcessRule(ri)) activeRulesForRefine.push(ri);
-            }
-            _quickRefineFast(activeRulesForRefine, false);
-            var refinedScore = _fastCalcScore();
-            var refinedInfo = _buildCurrentStateInfo(refinedScore);
-            _topCandidates[0] = _cloneSimState(_simState);
-            
-            // 精调后检查：分数达标时的处理
-            if (_targetScore && refinedInfo.feasible) {
-                _simState = _cloneSimState(_topCandidates[0]);
-                _forceBestFromCurrent(refinedScore);
-                
-                if (_isAllSatietyOk()) {
-                    // 分数和饱食度都达标，直接返回
-                    if (typeof onDone === 'function') onDone();
-                    return;
-                } else {
-                    // 分数达标但饱食度不达标
-                    if (_isSatietyDiffAcceptable()) {
-                        // 饱食度差值<=2，执行爬山优化
-                        _runClimbingPhase(0, function() {
-                            // 爬山后再次检查
-                            if (_isTargetReachedWithSatiety()) {
-                                // 达标则返回
-                                if (typeof onDone === 'function') onDone();
-                                return;
-                            }
-                            // 不达标则继续其他候选精调
-                            _continueOtherCandidates();
-                        });
-                        return;
-                    } else {
-                        _continueOtherCandidates();
-                        return;
-                    }
-                }
-            }
-            
-            // 分数未达标，继续其他候选精调
-            _continueOtherCandidates();
-            
-            function _continueOtherCandidates() {
-            
-            var totalMenusInit = 0;
-            for (var mi = 0; mi < _menusByRule.length; mi++) totalMenusInit += _menusByRule[mi].length;
-            var seedRefineMode = totalMenusInit > 800 ? true : false;
-            
-            for (var t = 1; t < _topCandidates.length; t++) {
-                _simState = _topCandidates[t];
-                _quickRefineFast(activeRulesForRefine, seedRefineMode);
-                var tScore = _fastCalcScore();
-                var tInfo = _buildCurrentStateInfo(tScore);
-                _topCandidates[t] = _cloneSimState(_simState);
-                if (_isStateInfoBetter(tInfo, refinedInfo)) {
-                    _topCandidates[0] = _topCandidates[t];
-                    refinedScore = tScore;
-                    refinedInfo = tInfo;
-                }
-            }
-            
-            _simState = _cloneSimState(_topCandidates[0]);
-        
+        }
+
+        _simState = _cloneSimState(bestState);
+        _forceBestFromCurrent(bestInfo.score);
         if (typeof onDone === 'function') onDone();
-            } // end _continueOtherCandidates
-            } // end _continueRefineProcess
-        }
-        
     }
     
     /**
@@ -3696,11 +3631,12 @@ var JianghuOptimizer = (function() {
     function _tryIncreaseOnePortionUntilTarget() {
         var bestStep = null;
         var baseScore = _fastCalcScore();
+        var baseInfo = _buildCurrentStateInfo(baseScore);
         var bestInfo = null;
-        var bestDelta = Infinity;
+        var bestGain = 0;
+        var bestMaterialDelta = Infinity;
 
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (!_shouldProcessRule(ri)) continue;
             for (var ci = 0; ci < _simState[ri].length; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
                     var rec = _simState[ri][ci].recipes[reci];
@@ -3708,13 +3644,36 @@ var JianghuOptimizer = (function() {
 
                     rec.quantity += 1;
                     var score = _fastCalcScore();
-                    var delta = Math.abs(score - baseScore);
                     var info = _buildCurrentStateInfo(score);
+                    var scoreGain = Math.max(0, score - baseScore);
+                    var materialDelta = Math.max(0, info.materialUsageTotal - baseInfo.materialUsageTotal);
+                    var reachesTarget = info.feasible;
+                    var bestReachesTarget = bestInfo && bestInfo.feasible;
+                    var isBetter = false;
 
-                    if (_isStateInfoBetter(info, bestInfo) ||
-                        (!!bestInfo && !(_isStateInfoBetter(bestInfo, info)) && delta < bestDelta)) {
+                    if (scoreGain > 0) {
+                        if (!bestInfo || (reachesTarget && !bestReachesTarget)) {
+                            isBetter = true;
+                        } else if (reachesTarget && bestReachesTarget) {
+                            isBetter = _isStateInfoBetter(info, bestInfo);
+                        } else if (!reachesTarget && !bestReachesTarget) {
+                            // 尚未达标时按实际边际分数/耗材补份，而不是只取单次最高加分。
+                            var left = scoreGain * Math.max(bestMaterialDelta, 1);
+                            var right = bestGain * Math.max(materialDelta, 1);
+                            if (left !== right) {
+                                isBetter = left > right;
+                            } else if (materialDelta !== bestMaterialDelta) {
+                                isBetter = materialDelta < bestMaterialDelta;
+                            } else {
+                                isBetter = scoreGain > bestGain;
+                            }
+                        }
+                    }
+
+                    if (isBetter) {
                         bestInfo = info;
-                        bestDelta = delta;
+                        bestGain = scoreGain;
+                        bestMaterialDelta = materialDelta;
                         bestStep = {ri: ri, ci: ci, reci: reci};
                     }
 
@@ -3734,8 +3693,10 @@ var JianghuOptimizer = (function() {
         var changed = true;
         while (changed) {
             changed = false;
+            var baseInfo = _buildCurrentStateInfo(_fastCalcScore());
+            var bestStep = null;
+            var bestSaving = 0;
             for (var ri = 0; ri < _rules.length; ri++) {
-                if (!_shouldProcessRule(ri)) continue;
                 for (var ci = 0; ci < _simState[ri].length; ci++) {
                     for (var reci = 0; reci < 3; reci++) {
                         var rec = _simState[ri][ci].recipes[reci];
@@ -3743,14 +3704,20 @@ var JianghuOptimizer = (function() {
                         
                         rec.quantity -= 1;
                         var score = _fastCalcScore();
-                        var satOk = _isAllSatietyOk();
-                        if (score >= _targetScore && satOk) {
-                            changed = true;
-                        } else {
-                            rec.quantity += 1;
+                        var info = _buildCurrentStateInfo(score);
+                        var saving = baseInfo.materialUsageTotal - info.materialUsageTotal;
+                        if (info.feasible && (saving > bestSaving ||
+                            (saving === bestSaving && bestStep && info.overshoot < bestStep.info.overshoot))) {
+                            bestSaving = saving;
+                            bestStep = {ri: ri, ci: ci, reci: reci, info: info};
                         }
+                        rec.quantity += 1;
                     }
                 }
+            }
+            if (bestStep) {
+                _simState[bestStep.ri][bestStep.ci].recipes[bestStep.reci].quantity -= 1;
+                changed = true;
             }
         }
     }
@@ -3758,6 +3725,220 @@ var JianghuOptimizer = (function() {
     function _isCurrentStateTargetReachedWithSatiety() {
         if (!_targetScore) return _isAllSatietyOk();
         return _fastCalcScore() >= _targetScore && _isAllSatietyOk();
+    }
+
+    function _rebuildTargetQuantitiesFromSinglePortions() {
+        for (var ri = 0; ri < _simState.length; ri++) {
+            for (var ci = 0; ci < _simState[ri].length; ci++) {
+                for (var reci = 0; reci < 3; reci++) {
+                    var rec = _simState[ri][ci].recipes[reci];
+                    if (rec && rec.data) rec.quantity = 1;
+                }
+            }
+        }
+
+        _fastCalcScore();
+        var maxSteps = 999;
+        var steps = 0;
+        while (!_isCurrentStateTargetReachedWithSatiety() && steps < maxSteps) {
+            if (!_tryIncreaseOnePortionUntilTarget()) return false;
+            steps++;
+        }
+        if (!_isCurrentStateTargetReachedWithSatiety()) return false;
+
+        _compressQuantitiesForTarget();
+        return _isCurrentStateTargetReachedWithSatiety();
+    }
+
+    function _canChefMakeSlotRecipes(ruleIndex, chefIndex) {
+        var slot = _simState[ruleIndex][chefIndex];
+        if (!slot || !slot.chefObj) return false;
+        var tempChef = JSON.parse(JSON.stringify(slot.chefObj));
+        for (var reci = 0; reci < slot.recipes.length; reci++) {
+            if (slot.recipes[reci].data) {
+                addCheffSkillDiff(tempChef, slot.recipes[reci].data);
+            }
+        }
+        return getChefSillDiff(tempChef, slot.chefObj) === '';
+    }
+
+    function _getLowMaterialRecipeIds(ruleIndex, chefIndex, recipeIndex, limit) {
+        var usedRecipeIds = {};
+        for (var ri = 0; ri < _simState.length; ri++) {
+            for (var ci = 0; ci < _simState[ri].length; ci++) {
+                for (var reci = 0; reci < 3; reci++) {
+                    if (ri === ruleIndex && ci === chefIndex && reci === recipeIndex) continue;
+                    var recipe = _simState[ri][ci].recipes[reci];
+                    if (recipe && recipe.data) usedRecipeIds[recipe.data.recipeId] = true;
+                }
+            }
+        }
+
+        var chefObj = _simState[ruleIndex][chefIndex].chefObj;
+        var candidates = [];
+        var menus = _menusByRule[ruleIndex] || [];
+        for (var i = 0; i < menus.length; i++) {
+            var recipeData = menus[i];
+            if (usedRecipeIds[recipeData.recipeId] || !_canChefMakeRecipe(chefObj, recipeData)) continue;
+            candidates.push({
+                recipeId: recipeData.recipeId,
+                materialUsage: _calcRecipeMaterialUsage(recipeData, chefObj),
+                price: recipeData.price || 0
+            });
+        }
+        candidates.sort(function(a, b) {
+            if (a.materialUsage !== b.materialUsage) return a.materialUsage - b.materialUsage;
+            return b.price - a.price;
+        });
+
+        var ids = [];
+        for (var ci = 0; ci < Math.min(limit, candidates.length); ci++) ids.push(candidates[ci].recipeId);
+        return ids;
+    }
+
+    function _getTargetRecipeCandidates(ruleIndex, chefIndex, recipeIndex) {
+        var selected = {};
+        var ids = [];
+        var ranked = _fastGetRecipeRanking(
+            ruleIndex,
+            chefIndex,
+            recipeIndex,
+            CONFIG.materialRecipeCandidates,
+            true,
+            'single'
+        );
+        var lowMaterialIds = _getLowMaterialRecipeIds(
+            ruleIndex,
+            chefIndex,
+            recipeIndex,
+            CONFIG.materialRecipeCandidates
+        );
+        var groups = [ranked, lowMaterialIds];
+        for (var groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+            for (var i = 0; i < groups[groupIndex].length; i++) {
+                var recipeId = typeof groups[groupIndex][i] === 'string' ? groups[groupIndex][i] : groups[groupIndex][i].recipeId;
+                if (recipeId && !selected[recipeId]) {
+                    selected[recipeId] = true;
+                    ids.push(recipeId);
+                }
+            }
+        }
+        return ids;
+    }
+
+    function _refineTargetRecipesForMaterials() {
+        if (!_targetScore || !_bestSimState) return;
+
+        var savedMode = _quantitySearchMode;
+        _quantitySearchMode = 'full';
+        _simState = _cloneSimState(_bestSimState);
+        if (!_rebuildTargetQuantitiesFromSinglePortions()) {
+            _quantitySearchMode = savedMode;
+            _simState = _cloneSimState(_bestSimState);
+            return;
+        }
+
+        var bestInfo = _buildCurrentStateInfo(_fastCalcScore());
+        var bestState = _cloneSimState(_simState);
+        for (var pass = 0; pass < CONFIG.materialRefinePasses; pass++) {
+            var improved = false;
+            for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
+                for (var chefIndex = 0; chefIndex < bestState[ruleIndex].length; chefIndex++) {
+                    for (var recipeIndex = 0; recipeIndex < 3; recipeIndex++) {
+                        var baseState = _cloneSimState(bestState);
+                        var currentRecipe = baseState[ruleIndex][chefIndex].recipes[recipeIndex];
+                        if (!currentRecipe || !currentRecipe.data) continue;
+
+                        _simState = _cloneSimState(baseState);
+                        var candidates = _getTargetRecipeCandidates(ruleIndex, chefIndex, recipeIndex);
+                        for (var i = 0; i < candidates.length; i++) {
+                            if (candidates[i] === currentRecipe.data.recipeId) continue;
+                            _simState = _cloneSimState(baseState);
+                            _simSetRecipe(ruleIndex, chefIndex, recipeIndex, candidates[i]);
+                            if (!_isAllSatietyOk() || !_rebuildTargetQuantitiesFromSinglePortions()) continue;
+
+                            var candidateInfo = _buildCurrentStateInfo(_fastCalcScore());
+                            if (_isStateInfoBetter(candidateInfo, bestInfo)) {
+                                bestInfo = candidateInfo;
+                                bestState = _cloneSimState(_simState);
+                                improved = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!improved) break;
+        }
+
+        _bestStateInfo = bestInfo;
+        _bestScore = bestInfo.score;
+        _bestSimState = bestState;
+        _simState = _cloneSimState(bestState);
+        _quantitySearchMode = savedMode;
+    }
+
+    /**
+     * 档位方案的真正目标是总食材消耗，而不是满份时的食材消耗。
+     * 固定已选菜谱，逐位置验证全部未占用厨师；每次换人后都从单份重新补到目标，
+     * 才能识别高分厨师用更少份数反而更省食材的情况。
+     */
+    function _refineTargetChefsForMaterials() {
+        if (!_targetScore || !_bestSimState) return;
+
+        var savedMode = _quantitySearchMode;
+        _quantitySearchMode = 'full';
+        _simState = _cloneSimState(_bestSimState);
+        if (!_rebuildTargetQuantitiesFromSinglePortions()) {
+            _quantitySearchMode = savedMode;
+            _simState = _cloneSimState(_bestSimState);
+            return;
+        }
+
+        var bestInfo = _buildCurrentStateInfo(_fastCalcScore());
+        var bestState = _cloneSimState(_simState);
+        var positionCount = 0;
+        for (var ri = 0; ri < _rules.length; ri++) {
+            positionCount += _simState[ri].length;
+        }
+
+        for (var pass = 0; pass < positionCount; pass++) {
+            var improved = false;
+            for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
+                var rule = _rules[ruleIndex];
+                for (var chefIndex = 0; chefIndex < _simState[ruleIndex].length; chefIndex++) {
+                    var baseState = _cloneSimState(bestState);
+                    var currentChefId = baseState[ruleIndex][chefIndex].chefId;
+                    if (!currentChefId) continue;
+                    _simState = _cloneSimState(baseState);
+                    var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
+
+                    for (var i = 0; i < rule.chefs.length; i++) {
+                        var chef = rule.chefs[i];
+                        if (!chef || chef.chefId === currentChefId || usedChefIds[chef.chefId]) continue;
+                        if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
+
+                        _simState = _cloneSimState(baseState);
+                        _simSetChef(ruleIndex, chefIndex, chef.chefId);
+                        if (!_canChefMakeSlotRecipes(ruleIndex, chefIndex)) continue;
+                        if (!_rebuildTargetQuantitiesFromSinglePortions()) continue;
+
+                        var candidateInfo = _buildCurrentStateInfo(_fastCalcScore());
+                        if (_isStateInfoBetter(candidateInfo, bestInfo)) {
+                            bestInfo = candidateInfo;
+                            bestState = _cloneSimState(_simState);
+                            improved = true;
+                        }
+                    }
+                }
+            }
+            if (!improved) break;
+        }
+
+        _bestStateInfo = bestInfo;
+        _bestScore = bestInfo.score;
+        _bestSimState = bestState;
+        _simState = _cloneSimState(bestState);
+        _quantitySearchMode = savedMode;
     }
 
     function _finalizeTargetQuantities() {
@@ -3772,15 +3953,7 @@ var JianghuOptimizer = (function() {
         _quantitySearchMode = 'full';
         _fastCalcScore(); // 刷新每道菜的max
         
-        var maxSteps = 999;
-        var steps = 0;
-        while (!_isCurrentStateTargetReachedWithSatiety() && steps < maxSteps) {
-            if (!_tryIncreaseOnePortionUntilTarget()) break;
-            steps++;
-        }
-        
-        if (_isCurrentStateTargetReachedWithSatiety()) {
-            _compressQuantitiesForTarget();
+        if (_rebuildTargetQuantitiesFromSinglePortions()) {
             _forceBestFromCurrent(_fastCalcScore());
         } else {
             _bestSimState = savedState;
@@ -3988,7 +4161,6 @@ var JianghuOptimizer = (function() {
         var positions = []; // [{ri, ci}]
         
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (!_shouldProcessRule(ri)) continue;
             var numChefs = _rules[ri].IntentList ? _rules[ri].IntentList.length : 3;
             for (var ci = 0; ci < numChefs; ci++) {
                 if (_simState[ri][ci].chefId) {
@@ -4005,6 +4177,8 @@ var JianghuOptimizer = (function() {
                 var p1 = positions[i], p2 = positions[j];
                 var id1 = _simState[p1.ri][p1.ci].chefId;
                 var id2 = _simState[p2.ri][p2.ci].chefId;
+                var savedSlot1 = _cloneSlotState(_simState[p1.ri][p1.ci]);
+                var savedSlot2 = _cloneSlotState(_simState[p2.ri][p2.ci]);
                 
                 if (id1 === id2) continue;
                 
@@ -4025,15 +4199,8 @@ var JianghuOptimizer = (function() {
                 if (_setBestFromCurrent(newScore)) {
                     improved = true;
                 } else {
-                    // 换回来
-                    _simSetChef(p1.ri, p1.ci, id1);
-                    _simSetChef(p2.ri, p2.ci, id2);
-                    for (var reci = 0; reci < 3; reci++) {
-                        var r1 = _simState[p1.ri][p1.ci].recipes[reci];
-                        if (r1.data) _simSetRecipe(p1.ri, p1.ci, reci, r1.data.recipeId);
-                        var r2 = _simState[p2.ri][p2.ci].recipes[reci];
-                        if (r2.data) _simSetRecipe(p2.ri, p2.ci, reci, r2.data.recipeId);
-                    }
+                    _restoreSlotState(p1.ri, p1.ci, savedSlot1);
+                    _restoreSlotState(p2.ri, p2.ci, savedSlot2);
                 }
             }
         }
@@ -4045,8 +4212,6 @@ var JianghuOptimizer = (function() {
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
-            if (!_shouldProcessRule(ruleIndex)) continue;
-            
             var rule = _rules[ruleIndex];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
@@ -4054,6 +4219,7 @@ var JianghuOptimizer = (function() {
                 
                 var currentChefId = _simState[ruleIndex][chefIndex].chefId;
                 var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
+                var savedSlot = _cloneSlotState(_simState[ruleIndex][chefIndex]);
                 
                 // 排名函数内部已经计算了每个厨师的分数（fastMode加速）
                 var chefRanking = _fastGetChefRanking(ruleIndex, chefIndex, true);
@@ -4068,6 +4234,7 @@ var JianghuOptimizer = (function() {
                     if (cr.skillOk === false) continue;
                     triedCount++;
                     
+                    _restoreSlotState(ruleIndex, chefIndex, savedSlot);
                     _simSetChef(ruleIndex, chefIndex, cr.chefId);
                     var newTotal = _fastCalcScore();
                     if (_setBestFromCurrent(newTotal)) {
@@ -4075,8 +4242,7 @@ var JianghuOptimizer = (function() {
                         currentChefId = cr.chefId; // 更新当前厨师
                         break; // 找到改进就停
                     } else {
-                        // 回退
-                        _simSetChef(ruleIndex, chefIndex, currentChefId);
+                        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
                     }
                 }
             }
@@ -4089,8 +4255,6 @@ var JianghuOptimizer = (function() {
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
-            if (!_shouldProcessRule(ruleIndex)) continue;
-            
             var rule = _rules[ruleIndex];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
@@ -4100,7 +4264,7 @@ var JianghuOptimizer = (function() {
                     var currentRecipeId = _simState[ruleIndex][chefIndex].recipes[recipeIndex].data 
                         ? _simState[ruleIndex][chefIndex].recipes[recipeIndex].data.recipeId : null;
                     
-                    // 用全局分数作为基准（而非单贵客分数，避免跨贵客效果导致误判）
+                    // 用当前方案总分作为基准，避免局部替换误判。
                     var currentTotalScore = _bestScore;
                     
                     // 扩大搜索宽度：取top7候选
@@ -4132,7 +4296,7 @@ var JianghuOptimizer = (function() {
     // ==================== 菜谱交换搜索 ====================
 
     /**
-     * 菜谱交换搜索：尝试交换两个位置的菜谱（同一贵客内或跨贵客）
+     * 菜谱交换搜索：尝试交换当前江湖帖内两个位置的菜谱。
      * 核心新增：两个位置的某道菜互换，可能发现贪心找不到的组合
      */
     function _climbRecipeSwap() {
@@ -4140,7 +4304,6 @@ var JianghuOptimizer = (function() {
         var positions = []; // [{ri, ci, reci}] 所有有菜谱的位置
         
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (!_shouldProcessRule(ri)) continue;
             var numChefs = _rules[ri].IntentList ? _rules[ri].IntentList.length : 3;
             for (var ci = 0; ci < numChefs; ci++) {
                 for (var reci = 0; reci < 3; reci++) {
@@ -4182,7 +4345,12 @@ var JianghuOptimizer = (function() {
                 if (rd1.bake > 0 && (!chef2.bakeVal || chef2.bakeVal < rd1.bake)) continue;
                 if (rd1.steam > 0 && (!chef2.steamVal || chef2.steamVal < rd1.steam)) continue;
                 
-                // 执行交换
+                // 先移除双方旧菜，避免第一道新菜仍被另一道旧菜占用食材压低份数。
+                var sameSlot = p1.ri === p2.ri && p1.ci === p2.ci;
+                var savedSlot1 = _cloneSlotState(_simState[p1.ri][p1.ci]);
+                var savedSlot2 = sameSlot ? null : _cloneSlotState(_simState[p2.ri][p2.ci]);
+                _simSetRecipe(p1.ri, p1.ci, p1.reci, null);
+                _simSetRecipe(p2.ri, p2.ci, p2.reci, null);
                 _simSetRecipe(p1.ri, p1.ci, p1.reci, rd2.recipeId);
                 _simSetRecipe(p2.ri, p2.ci, p2.reci, rd1.recipeId);
                 
@@ -4191,9 +4359,8 @@ var JianghuOptimizer = (function() {
                 if (_setBestFromCurrent(newScore)) {
                     improved = true;
                 } else {
-                    // 换回来
-                    _simSetRecipe(p1.ri, p1.ci, p1.reci, rd1.recipeId);
-                    _simSetRecipe(p2.ri, p2.ci, p2.reci, rd2.recipeId);
+                    _restoreSlotState(p1.ri, p1.ci, savedSlot1);
+                    if (!sameSlot) _restoreSlotState(p2.ri, p2.ci, savedSlot2);
                 }
             }
         }
@@ -4212,8 +4379,6 @@ var JianghuOptimizer = (function() {
         var improved = false;
         
         for (var ruleIndex = 0; ruleIndex < _rules.length; ruleIndex++) {
-            if (!_shouldProcessRule(ruleIndex)) continue;
-            
             var rule = _rules[ruleIndex];
             var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
@@ -4222,16 +4387,7 @@ var JianghuOptimizer = (function() {
                 var usedChefIds = _getUsedChefIds(ruleIndex, chefIndex);
                 
                 // 保存当前位置完整状态
-                var savedSlot = {
-                    chefId: _simState[ruleIndex][chefIndex].chefId,
-                    chefObj: _simState[ruleIndex][chefIndex].chefObj,
-                    equipObj: _simState[ruleIndex][chefIndex].equipObj,
-                    recipes: [
-                        _simState[ruleIndex][chefIndex].recipes[0],
-                        _simState[ruleIndex][chefIndex].recipes[1],
-                        _simState[ruleIndex][chefIndex].recipes[2]
-                    ]
-                };
+                var savedSlot = _cloneSlotState(_simState[ruleIndex][chefIndex]);
                 
                 var chefRanking = _fastGetChefRanking(ruleIndex, chefIndex, true);
                 var triedCount = 0;
@@ -4260,10 +4416,7 @@ var JianghuOptimizer = (function() {
                         break; // 找到改进就停
                     } else {
                         // 回退整个位置
-                        _simState[ruleIndex][chefIndex].chefId = savedSlot.chefId;
-                        _simState[ruleIndex][chefIndex].chefObj = savedSlot.chefObj;
-                        _simState[ruleIndex][chefIndex].equipObj = savedSlot.equipObj;
-                        _simState[ruleIndex][chefIndex].recipes = savedSlot.recipes;
+                        _restoreSlotState(ruleIndex, chefIndex, savedSlot);
                     }
                 }
             }
@@ -4385,8 +4538,8 @@ var JianghuOptimizer = (function() {
             _timeStats.initTime = Date.now() - _timeStats.startTime;
             _setProgressTarget(10);
             
-            // 初始化后检查：分数达标且饱食度达标时直接结束
-            if (_isTargetReachedWithSatiety()) {
+            // 江湖帖省食材模式必须继续比较全部种子；无目标模式保留原有提前结束行为。
+            if (!_targetScore && _isTargetReachedWithSatiety()) {
                 _finishOptimization(onComplete, false);
                 return;
             }
@@ -4400,7 +4553,7 @@ var JianghuOptimizer = (function() {
                             var climbScore = _fastCalcScore();
                         _setBestFromCurrent(climbScore);
                         // 爬山后再次检查，如果达标则结束
-                        if (_isTargetReachedWithSatiety()) {
+                        if (!_targetScore && _isTargetReachedWithSatiety()) {
                             _finishOptimization(onComplete, false);
                             return;
                         }
@@ -4427,9 +4580,7 @@ var JianghuOptimizer = (function() {
             _simState = _cloneSimState(_topCandidates[si]);
             var sc = _fastCalcScore();
             var seedInfo = _buildCurrentStateInfo(sc);
-            var dedupeKey = _targetScore
-                ? [seedInfo.score, seedInfo.satGapTotal, seedInfo.materialUsageTotal, seedInfo.totalQuantity].join('|')
-                : sc;
+            var dedupeKey = [seedInfo.score, seedInfo.satGapTotal, seedInfo.materialUsageTotal, seedInfo.totalQuantity].join('|');
             if (!seenScores[dedupeKey]) {
                 seenScores[dedupeKey] = true;
                 uniqueSeeds.push({state: _topCandidates[si], score: sc, info: seedInfo});
@@ -4446,8 +4597,8 @@ var JianghuOptimizer = (function() {
                 return;
             }
             
-            // 种子搜索前检查：分数和饱食度都达标时结束
-            if (_isTargetReachedWithSatiety()) {
+            // 目标分模式下达标不代表食材最省，必须跑完剩余种子。
+            if (!_targetScore && _isTargetReachedWithSatiety()) {
                 _finishOptimization(onComplete, false);
                 return;
             }
@@ -4476,15 +4627,12 @@ var JianghuOptimizer = (function() {
             
             // 爬山
             _runClimbingPhase(0, function() {
-                // 爬山后再检查 — 跳过无望种子，节省深度搜索时间
-                // 注意：跨贵客重分配可带来5%+的提升，阈值不能太激进
+                // 爬山后再检查，跳过无望种子，节省深度搜索时间。
                 var climbedScore = _bestScore;
-                var climbImproved = _targetScore
-                    ? _isStateInfoBetter(_bestStateInfo, seedInfo.info)
-                    : (climbedScore > seedScore);
+                var climbImproved = _isStateInfoBetter(_bestStateInfo, seedInfo.info);
                 var ratio = (!_targetScore && globalBestScore > 0) ? climbedScore / globalBestScore : 1;
                 // 条件1：爬山无改进且<90% → 跳过（保守，避免误杀有潜力的种子）
-                // 条件2：即使有改进，<88% → 也跳过（差距太大，跨贵客难以弥补）
+                // 条件2：即使有改进，<88% 也跳过。
                 if (!_targetScore && currentSeed > 0 && ((!climbImproved && ratio < 0.90) || ratio < 0.88)) {
                     _bestScore = globalBestScore;
                     _bestSimState = globalBestState;
@@ -4496,97 +4644,34 @@ var JianghuOptimizer = (function() {
                 
                 var activeRules = [];
                 for (var ri = 0; ri < _rules.length; ri++) {
-                    if (_shouldProcessRule(ri)) activeRules.push(ri);
+                    activeRules.push(ri);
                 }
                 
-                // 边界种子轻量搜索 — 90%-95%之间的种子只做1轮跨贵客，跳过重建
+                // 边界种子只做最终交换，避免在低潜力起点耗时重建。
                 var isLightSeed = (!_targetScore && currentSeed > 0 && ratio < 0.95);
-                if (isLightSeed) {
-                }
-                
-                // 跳过穷举搜索（历史数据显示从未产生改进）
-                // _exhaustiveSlotSearch(activeRules);
-                
-                // 多轮跨贵客（边界种子只做1轮，正常种子最多2轮）
-                var crossRound = 0;
-                var maxCross = isLightSeed ? 1 : 2;
-                
-                function _seedCrossLoop() {
-                    if (crossRound >= maxCross) {
-                        _seedAfterCross();
-                        return;
+                setTimeout(function() {
+                    var infoBeforeFinal = _cloneStateInfo(_bestStateInfo);
+                    if (!isLightSeed) _rebuildSingleGuest();
+                    _simState = _cloneSimState(_bestSimState);
+                    _climbRecipeSwap();
+                    _setBestFromCurrent(_fastCalcScore());
+
+                    if (_isStateInfoBetter(_bestStateInfo, infoBeforeFinal)) {
+                        _runClimbingPhase(0, _finishSeed, onProgress);
+                    } else {
+                        _finishSeed();
                     }
-                    crossRound++;
-                    // 拆分跨贵客循环，避免阻塞浏览器
-                    setTimeout(function() {
-                        var scoreBefore = _bestScore;
-                        var crossImproved = _crossGuestReassign(activeRules);
-                        if (crossImproved) {
-                            setTimeout(function() {
-                                _simState = _cloneSimState(_bestSimState);
-                                _climbRecipeSwap();
-                                var ss = _fastCalcScore();
-                                _setBestFromCurrent(ss);
-                                setTimeout(_seedCrossLoop, 2);
-                            }, 0);
-                        } else {
-                            _seedAfterCross();
-                        }
-                    }, 0);
-                }
-                
-                function _seedAfterCross() {
-                    // 边界种子跳过整贵客重建和最终爬山
-                    if (isLightSeed) {
-                        // 拆分setTimeout避免阻塞浏览器
-                        setTimeout(function() {
-                            _simState = _cloneSimState(_bestSimState);
-                            _climbRecipeSwap();
-                            var ss = _fastCalcScore();
-                            _setBestFromCurrent(ss);
-                            _finishSeed();
-                        }, 0);
-                        return;
-                    }
-                    
-                    // 整贵客重建 — 减少厨师候选数（10→5），且仅在跨贵客有改进时才执行
-                    var crossDidImprove = _targetScore
-                        ? _isStateInfoBetter(_bestStateInfo, seedInfo.info)
-                        : (_bestScore > seedScore);
-                    
-                    // 整贵客重建放到setTimeout中
-                    setTimeout(function() {
-                        if (crossDidImprove) {
-                            _fullGuestRebuild(activeRules);
-                        } else {
-                        }
-                        
-                        // 菜谱交换也放到独立setTimeout
-                        setTimeout(function() {
-                            var infoBeforeFinish = _cloneStateInfo(_bestStateInfo);
-                            _simState = _cloneSimState(_bestSimState);
-                            _climbRecipeSwap();
-                            var ss = _fastCalcScore();
-                            _setBestFromCurrent(ss);
-                            
-                            var needFinalClimb = _isStateInfoBetter(_bestStateInfo, infoBeforeFinish) || crossDidImprove;
-                            if (needFinalClimb) {
-                                _runClimbingPhase(0, function() {
-                                    _finishSeed();
-                                }, onProgress);
-                            } else {
-                                _finishSeed();
-                            }
-                        }, 0);
-                    }, 0);
-                }
+                }, 0);
                 
                 function _finishSeed() {
                     var seedFinalScore = _bestScore;
                     // 收敛到已知结果时跳过剩余种子（提前终止）
-                    if (!_targetScore && seenFinalScores[seedFinalScore]) {
+                    var finalInfoKey = [seedFinalScore, _bestStateInfo ? _bestStateInfo.satGapTotal : Infinity,
+                        _bestStateInfo ? _bestStateInfo.materialUsageTotal : Infinity,
+                        _bestStateInfo ? _bestStateInfo.totalQuantity : Infinity].join('|');
+                    if (!_targetScore && seenFinalScores[finalInfoKey]) {
                         // 与全局最佳比较后直接结束
-                        if (seedFinalScore > globalBestScore) {
+                        if (_isStateInfoBetter(_bestStateInfo, globalBestInfo)) {
                             globalBestScore = seedFinalScore;
                             globalBestState = _cloneSimState(_bestSimState);
                             globalBestInfo = _cloneStateInfo(_bestStateInfo);
@@ -4597,10 +4682,10 @@ var JianghuOptimizer = (function() {
                         _finishOptimization(onComplete, false);
                         return;
                     }
-                    if (!_targetScore) seenFinalScores[seedFinalScore] = true;
+                    if (!_targetScore) seenFinalScores[finalInfoKey] = true;
                     
                     // 与全局最佳比较
-                    if (_targetScore ? _isStateInfoBetter(_bestStateInfo, globalBestInfo) : (seedFinalScore > globalBestScore)) {
+                    if (_isStateInfoBetter(_bestStateInfo, globalBestInfo)) {
                         globalBestScore = seedFinalScore;
                         globalBestState = _cloneSimState(_bestSimState);
                         globalBestInfo = _cloneStateInfo(_bestStateInfo);
@@ -4611,8 +4696,8 @@ var JianghuOptimizer = (function() {
                     _bestSimState = globalBestState;
                     _bestStateInfo = globalBestInfo;
                     
-                    // 种子完成后检查：分数和饱食度都达标时结束
-                    if (_isTargetReachedWithSatiety()) {
+                    // 目标分模式下达标不代表食材最省，必须跑完剩余种子。
+                    if (!_targetScore && _isTargetReachedWithSatiety()) {
                         _finishOptimization(onComplete, false);
                         return;
                     }
@@ -4622,7 +4707,6 @@ var JianghuOptimizer = (function() {
                     setTimeout(_runSeedSearch, 2);
                 }
                 
-                setTimeout(_seedCrossLoop, 2);
             }, onProgress);
         }
         
@@ -4636,7 +4720,7 @@ var JianghuOptimizer = (function() {
     function _perturbAndRebuild() {
         var activeRules = [];
         for (var ri = 0; ri < _rules.length; ri++) {
-            if (_shouldProcessRule(ri)) activeRules.push(ri);
+            activeRules.push(ri);
         }
         if (Math.random() < 0.5) {
             return _microPerturb(activeRules);
@@ -4764,115 +4848,13 @@ var JianghuOptimizer = (function() {
     }
     
     /**
-     * 跨贵客重分配：固定一个贵客，对另一个贵客做完整重搜索
-     * 核心思路：当前解可能把好厨师分配给了错误的贵客
+     * 单贵客重建：完全清空当前江湖帖，用不同的首厨师重建。
      */
-    function _crossGuestReassign(activeRules) {
-        if (activeRules.length < 2) return false;
-        
-        // 自适应精调深度 — 菜谱少时精调更深，菜谱多时轻量+后补
-        var totalMenus = 0;
-        for (var mi = 0; mi < _menusByRule.length; mi++) totalMenus += _menusByRule[mi].length;
-        // 方案A精调模式：少菜谱完整，多菜谱轻量
-        var planARefineMode = totalMenus > 800 ? true : false;
-        // 方案B精调模式：少菜谱2轮，多菜谱轻量
-        var crossRefineMode = totalMenus > 800 ? true : 2;
-        
+    function _rebuildSingleGuest() {
         var improved = false;
-        
-        for (var targetIdx = 0; targetIdx < activeRules.length; targetIdx++) {
-            var targetRule = activeRules[targetIdx];
-            var rule = _rules[targetRule];
-            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
-            
-            // 方案A: 清空目标贵客，用意图感知重新填充
-            _simState = _cloneSimState(_bestSimState);
-            for (var ci = 0; ci < numChefs; ci++) {
-                _simState[targetRule][ci] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
-            }
-            _greedyFillGuestFullWithIntent(targetRule);
-            _quickRefineFast(activeRules, planARefineMode);  // 方案A自适应精调
-            var newScore = _fastCalcScore();
-            if (_setBestFromCurrent(newScore)) {
-                improved = true;
-            }
-            
-            // 方案B: 对目标贵客的每个位置，尝试不同种子菜谱
-            for (var seedPos = 0; seedPos < numChefs; seedPos++) {
-                var strategy = _analyzeIntents(targetRule, seedPos);
-                var seedRecipeIdx = strategy.seedRecipeIndex;
-                
-                // 获取种子菜谱排名
-                _simState = _cloneSimState(_bestSimState);
-                // 清空目标位置
-                _simState[targetRule][seedPos] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
-                
-                if (strategy.prePlaceList.length > 0) {
-                    for (var pp = 0; pp < strategy.prePlaceList.length; pp++) {
-                        var prePlace = strategy.prePlaceList[pp];
-                        var prePlaceRecipeId = _findBestFilteredRecipe(targetRule, seedPos, prePlace.recipeIndex, prePlace.filterFn);
-                        if (prePlaceRecipeId) _simSetRecipe(targetRule, seedPos, prePlace.recipeIndex, prePlaceRecipeId);
-                    }
-                }
-                
-                var topRecipes = _fastGetRecipeRanking(targetRule, seedPos, seedRecipeIdx, 5, true);
-                
-                for (var rsi = 0; rsi < topRecipes.length; rsi++) {
-                    
-                    _simState = _cloneSimState(_bestSimState);
-                    _simState[targetRule][seedPos] = {chefId: null, chefObj: null, equipObj: {}, recipes: [{data:null,quantity:0,max:0},{data:null,quantity:0,max:0},{data:null,quantity:0,max:0}]};
-                    
-                    if (strategy.prePlaceList.length > 0) {
-                        for (var pp = 0; pp < strategy.prePlaceList.length; pp++) {
-                            var prePlace = strategy.prePlaceList[pp];
-                            var prePlaceRecipeId = _findBestFilteredRecipe(targetRule, seedPos, prePlace.recipeIndex, prePlace.filterFn);
-                            if (prePlaceRecipeId) _simSetRecipe(targetRule, seedPos, prePlace.recipeIndex, prePlaceRecipeId);
-                        }
-                    }
-                    
-                    _simSetRecipe(targetRule, seedPos, seedRecipeIdx, topRecipes[rsi].recipeId);
-                    var cr = _fastGetChefRanking(targetRule, seedPos, true);
-                    var usedIds = _getUsedChefIds(targetRule, seedPos);
-                    for (var j = 0; j < cr.length; j++) {
-                        if (!cr[j].used && !usedIds[cr[j].chefId] && cr[j].skillOk !== false) {
-                            _simSetChef(targetRule, seedPos, cr[j].chefId);
-                            break;
-                        }
-                    }
-                    _greedyFillRecipesOrdered(targetRule, seedPos, strategy.fillOrder, seedRecipeIdx);
-                    _quickRefineFast(activeRules, crossRefineMode);  // 自适应精调深度
-                    
-                    var newScore2 = _fastCalcScore();
-                    if (_setBestFromCurrent(newScore2)) {
-                        improved = true;
-                        var recipeName = _recipeMap[topRecipes[rsi].recipeId] ? _recipeMap[topRecipes[rsi].recipeId].name : '?';
-                    }
-                }
-            }
-        }
-        
-        _simState = _cloneSimState(_bestSimState);
-        // 如果跨贵客有改进，做一次完整精调弥补轻量模式的精度损失
-        if (improved) {
-            _quickRefineFast(activeRules, false);
-            var refinedScore = _fastCalcScore();
-            _setBestFromCurrent(refinedScore);
-            _simState = _cloneSimState(_bestSimState);
-        }
-        return improved;
-    }
-    
-    /**
-     * 整贵客重建：完全清空一个贵客，用不同的首厨师重建
-     */
-    function _fullGuestRebuild(activeRules) {
-        var improved = false;
-        
-        for (var targetIdx = 0; targetIdx < activeRules.length; targetIdx++) {
-            var targetRule = activeRules[targetIdx];
-            var rule = _rules[targetRule];
-            var numChefs = rule.IntentList ? rule.IntentList.length : 3;
-            var gName = rule.Title || ('贵客' + (targetRule + 1));
+        var targetRule = 0;
+        var rule = _rules[targetRule];
+        var numChefs = rule.IntentList ? rule.IntentList.length : 3;
             
             // 收集当前解中目标贵客使用的厨师
             var currentChefSet = {};
@@ -4880,21 +4862,11 @@ var JianghuOptimizer = (function() {
                 if (_bestSimState[targetRule][ci].chefId) currentChefSet[_bestSimState[targetRule][ci].chefId] = true;
             }
             
-            // 收集其他贵客使用的厨师
-            var otherUsedChefs = {};
-            for (var ri = 0; ri < _bestSimState.length; ri++) {
-                if (ri === targetRule) continue;
-                for (var ci = 0; ci < _bestSimState[ri].length; ci++) {
-                    if (_bestSimState[ri][ci].chefId) otherUsedChefs[_bestSimState[ri][ci].chefId] = true;
-                }
-            }
-            
             // 可用厨师（排除其他贵客已用的）
             var availableChefs = [];
             for (var i = 0; i < rule.chefs.length; i++) {
                 var chef = rule.chefs[i];
                 if (_cachedConfig.useGot && !chef.got && !isAllUltimateMode) continue;
-                if (otherUsedChefs[chef.chefId]) continue;
                 availableChefs.push(chef);
             }
             availableChefs.sort(function(a, b) { return b.rarity - a.rarity; });
@@ -4931,7 +4903,7 @@ var JianghuOptimizer = (function() {
                         _greedyFillPositionWithIntent(targetRule, ci, strategyN);
                     }
                     
-                    _quickRefineFast(activeRules, true);  // 轻量精调
+                    _quickRefineFast([targetRule], true);  // 轻量精调
                     
                     var comboKey = [];
                     for (var ci = 0; ci < numChefs; ci++) comboKey.push(_simState[targetRule][ci].chefId || 0);
@@ -4948,7 +4920,6 @@ var JianghuOptimizer = (function() {
                     }
                 }
             }
-        }
         
         _simState = _cloneSimState(_bestSimState);
         return improved;
@@ -5014,8 +4985,8 @@ var JianghuOptimizer = (function() {
                             _simState = _cloneSimState(_bestSimState);
                             jointImproved = _climbJointChefRecipe();
                         
-                            // 爬山后检查：分数和饱食度都达标时结束
-                            if (_isTargetReachedWithSatiety()) {
+                            // 省食材模式即使达标也要继续其他种子和收尾优化。
+                            if (!_targetScore && _isTargetReachedWithSatiety()) {
                                 if (typeof onDone === 'function') onDone();
                                 return;
                             }
@@ -5036,6 +5007,34 @@ var JianghuOptimizer = (function() {
 
     // ==================== 完成：写回系统 ====================
 
+    function _snapshotSystemCustomState() {
+        if (typeof calCustomRule === 'undefined' || !calCustomRule || !calCustomRule.rules) return null;
+        var snapshot = [];
+        for (var ri = 0; ri < calCustomRule.rules.length; ri++) {
+            snapshot.push(JSON.parse(JSON.stringify(calCustomRule.rules[ri].custom || [])));
+        }
+        return snapshot;
+    }
+
+    function _restoreSystemCustomState(snapshot) {
+        if (!snapshot || typeof calCustomRule === 'undefined' || !calCustomRule || !calCustomRule.rules) return;
+        for (var ri = 0; ri < calCustomRule.rules.length; ri++) {
+            calCustomRule.rules[ri].custom = JSON.parse(JSON.stringify(snapshot[ri] || []));
+        }
+        if (typeof calCustomResults === 'function') calCustomResults(_gameData);
+    }
+
+    function _isAppliedSystemSatietyOk() {
+        if (typeof calCustomRule === 'undefined' || !calCustomRule || !calCustomRule.rules) return false;
+        for (var ri = 0; ri < calCustomRule.rules.length; ri++) {
+            var rule = calCustomRule.rules[ri];
+            if (!rule || !rule.Satiety) continue;
+            var satiety = calSatiety(rule.custom || [], rule);
+            if (!satiety.done || satiety.total !== rule.Satiety) return false;
+        }
+        return true;
+    }
+
     function _finishOptimization(onComplete) {
         // 防止重复调用
         if (!_isRunning) return;
@@ -5045,6 +5044,7 @@ var JianghuOptimizer = (function() {
         
         // 将最佳模拟状态写回系统（这里才触碰DOM）
         var memTotal = 0;
+        var systemSnapshot = null;
         if (_bestSimState) {
             // 先恢复到最佳状态
             _simState = _bestSimState;
@@ -5052,7 +5052,6 @@ var JianghuOptimizer = (function() {
             // 补充缺失的厨师：如果有位置没有厨师，用未使用的厨师补上并重选菜谱
             var usedChefIds = {};
             for (var ri = 0; ri < _rules.length; ri++) {
-                if (!_shouldProcessRule(ri)) continue;  // 跳过不需要处理的贵客
                 var rule = _rules[ri];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
                 for (var ci = 0; ci < numChefs; ci++) {
@@ -5090,7 +5089,7 @@ var JianghuOptimizer = (function() {
                         // 检查厨师技法是否足够做这道菜
                         for (var sk = 0; sk < skills.length; sk++) {
                             var s = skills[sk];
-                            if (currentRecipe.data[s] > 0 && (!chefObj[s] || chefObj[s] < currentRecipe.data[s])) {
+                            if (currentRecipe.data[s] > 0 && (!chefObj[s + 'Val'] || chefObj[s + 'Val'] < currentRecipe.data[s])) {
                                 needReplace = true;
                                 break;
                             }
@@ -5110,7 +5109,7 @@ var JianghuOptimizer = (function() {
                             if (chefObj && rd.data) {
                                 for (var sk = 0; sk < skills.length; sk++) {
                                     var s = skills[sk];
-                                    if (rd.data[s] > 0 && (!chefObj[s] || chefObj[s] < rd.data[s])) {
+                                    if (rd.data[s] > 0 && (!chefObj[s + 'Val'] || chefObj[s + 'Val'] < rd.data[s])) {
                                         canMake = false;
                                         break;
                                     }
@@ -5132,7 +5131,6 @@ var JianghuOptimizer = (function() {
             // 第一轮：补充缺失厨师并分配菜谱
             var fixedPositions = [];
             for (var ri = 0; ri < _rules.length; ri++) {
-                if (!_shouldProcessRule(ri)) continue;  // 跳过不需要处理的贵客
                 var rule = _rules[ri];
                 var numChefs = rule.IntentList ? rule.IntentList.length : 3;
                 for (var ci = 0; ci < numChefs; ci++) {
@@ -5224,13 +5222,17 @@ var JianghuOptimizer = (function() {
             // 更新最佳状态
             _bestSimState = _cloneSimState(_simState);
             _finalizeTargetQuantities();
+            _refineTargetChefsForMaterials();
+            _refineTargetRecipesForMaterials();
+            // 换菜谱可能改变厨师的边际分数和减耗效果，再交替验证一次厨师。
+            _refineTargetChefsForMaterials();
             _simState = _cloneSimState(_bestSimState);
 
-            var targetConstraintOk = !_targetScore || _isCurrentStateTargetReachedWithSatiety();
-            if (targetConstraintOk) {
-                _bestStateInfo = _buildCurrentStateInfo();
-                _bestScore = _bestStateInfo.score;
-            }
+            // 必须基于收尾后的实际方案重新计算约束，不能复用搜索阶段的状态信息。
+            _bestStateInfo = _buildCurrentStateInfo(_fastCalcScore());
+            _bestScore = _bestStateInfo.score;
+            // 江湖帖无论是否选择档位，饱食度都必须精确达标；设置档位时还必须达到目标分。
+            var targetConstraintOk = _bestStateInfo.feasible;
             
             // 计算内存分数明细
             var memScores = [];
@@ -5240,20 +5242,27 @@ var JianghuOptimizer = (function() {
                     memScores.push(rScore);
                     memTotal += rScore;
                 }
+                systemSnapshot = _snapshotSystemCustomState();
                 _applySimStateToSystem(_bestSimState);
             }
         }
         
         var totalTime = Date.now() - (_timeStats.startTime || Date.now());
         
-        var targetConstraintOkFinal = !_targetScore || (_bestStateInfo && _bestStateInfo.feasible);
+        var targetConstraintOkFinal = !!(_bestStateInfo && _bestStateInfo.feasible);
         var finalScore = _bestScore || 0;
         if (targetConstraintOkFinal) {
-            // 用系统函数算一次真实分数
+            // 写回后必须以页面结算结果复核；不一致时恢复写回前的方案。
             if (typeof calCustomResults === 'function') {
                 calCustomResults(_gameData);
             }
             finalScore = (typeof calCustomRule !== 'undefined' && calCustomRule) ? (calCustomRule.score || 0) : finalScore;
+            var appliedScoreOk = !_targetScore || finalScore >= _targetScore;
+            var appliedSatietyOk = _isAppliedSystemSatietyOk();
+            if (!appliedScoreOk || !appliedSatietyOk) {
+                _restoreSystemCustomState(systemSnapshot);
+                targetConstraintOkFinal = false;
+            }
         }
         
         if (memTotal > 0 && finalScore !== memTotal) {
@@ -5262,19 +5271,31 @@ var JianghuOptimizer = (function() {
         if (_targetScore) {
         }
         
-        _bestResult = { score: finalScore };
+        var finalSatietyDiff = targetConstraintOkFinal && _bestStateInfo ? 0 : (_bestStateInfo ? _bestStateInfo.satGapTotal : null);
+        _bestResult = { score: finalScore, satietyOk: targetConstraintOkFinal, satietyDiff: finalSatietyDiff };
         _isRunning = false;
         
         // 先调用完成回调（回调中的 applyResult 仍需要 _gameData 等数据）
         if (typeof onComplete === 'function') {
             if (targetConstraintOkFinal) {
-                onComplete({ success: true, score: finalScore, timeMs: totalTime, message: '优化完成' });
+                onComplete({
+                    success: true,
+                    score: finalScore,
+                    timeMs: totalTime,
+                    satietyOk: true,
+                    satietyDiff: 0,
+                    message: '优化完成'
+                });
             } else {
                 onComplete({
                     success: false,
                     score: finalScore,
                     timeMs: totalTime,
-                    message: '未找到满足目标分数且饱食度精确达标的方案'
+                    satietyOk: false,
+                    satietyDiff: finalSatietyDiff,
+                    message: _targetScore
+                        ? '未找到满足目标分数且饱食度精确达标的方案，未应用结果'
+                        : '未找到饱食度精确达标的方案，未应用结果'
                 });
             }
         }
@@ -5308,12 +5329,17 @@ var JianghuOptimizer = (function() {
         for (var ri = 0; ri < simState.length; ri++) {
             for (var ci = 0; ci < simState[ri].length; ci++) {
                 var slot = simState[ri][ci];
-                if (slot.chefId && typeof setCustomChef === 'function') {
-                    setCustomChef(ri, ci, slot.chefId);
+                if (typeof setCustomChef === 'function') {
+                    setCustomChef(ri, ci, slot.chefId || null);
+                }
+                if (typeof setCustomEquip === 'function') {
+                    setCustomEquip(ri, ci, slot.equipObj && slot.equipObj.equipId ? slot.equipObj.equipId : null);
                 }
                 for (var reci = 0; reci < slot.recipes.length; reci++) {
-                    if (slot.recipes[reci].data && typeof setCustomRecipe === 'function') {
-                        setCustomRecipe(ri, ci, reci, slot.recipes[reci].data.recipeId);
+                    if (typeof setCustomRecipe === 'function') {
+                        setCustomRecipe(ri, ci, reci, slot.recipes[reci].data ? slot.recipes[reci].data.recipeId : null);
+                    }
+                    if (slot.recipes[reci].data) {
                         if (typeof setCustomRecipeQuantity === 'function') {
                             setCustomRecipeQuantity(ri, ci, reci, slot.recipes[reci].quantity || 0);
                         }
@@ -5335,12 +5361,10 @@ var JianghuOptimizer = (function() {
 
     function isRunning() { return _isRunning; }
     function getBestResult() { return _bestResult; }
-    
-    function setGuestFilter(guestIndex) {
-        _guestFilter = guestIndex;
-    }
-    
-    function getGuestFilter() { return _guestFilter; }
+
+    // 兼容旧页面脚本：江湖帖固定单贵客，筛选调用不改变任何状态。
+    function setGuestFilter() {}
+    function getGuestFilter() { return null; }
     
     return {
         init: init,
