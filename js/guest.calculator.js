@@ -1592,6 +1592,36 @@ var GuestRateCalculator = (function($) {
         isSyncingJadeMode = false;
     }
 
+    /**
+     * 将结果区的星级和份数应用到场上同星级的已选菜谱。
+     */
+    function syncSelectedRecipeQuantitiesFromGuestRateControls() {
+        if (!isGuestRateMode() || !calCustomRule || !calCustomRule.rules || !calCustomRule.rules.length) {
+            return;
+        }
+
+        var starLevel = parseInt($("#star-level").val(), 10);
+        var quantity = parseInt($("#quantity-value").val(), 10);
+        var custom = calCustomRule.rules[0].custom;
+
+        if (!custom || isNaN(starLevel) || isNaN(quantity)) {
+            return;
+        }
+
+        for (var c in custom) {
+            if (!custom.hasOwnProperty(c)) {
+                continue;
+            }
+            var recipes = custom[c].recipes || [];
+            for (var r in recipes) {
+                var recipe = recipes[r];
+                if (recipe && recipe.data && Number(recipe.data.rarity) === starLevel) {
+                    recipe.quantity = quantity;
+                }
+            }
+        }
+    }
+
     function syncJadeDualControlToSource() {
         isSyncingJadeMode = true;
         $("#guest-rate-input").val($("#guest-rate-input-jade").val());
@@ -1715,6 +1745,7 @@ var GuestRateCalculator = (function($) {
         // 给主菜谱份数输入框添加验证（最小值1）
         $("#quantity-value").on("input change", function() {
             validateQuantity($(this));
+            syncSelectedRecipeQuantitiesFromGuestRateControls();
             // 触发正常营业计算，这会调用 updateCalSummaryDisplay 并更新贵客率计算器
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
@@ -1727,6 +1758,7 @@ var GuestRateCalculator = (function($) {
             }
             validateQuantity($(this));
             syncJadeControlToSource();
+            syncSelectedRecipeQuantitiesFromGuestRateControls();
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
             }
@@ -1773,6 +1805,9 @@ var GuestRateCalculator = (function($) {
         
         // 监听星级和品级变化
         $("#star-level, #quality-level").on("changed.bs.select", function() {
+            if (this.id === "star-level") {
+                syncSelectedRecipeQuantitiesFromGuestRateControls();
+            }
             // 触发正常营业计算，这会调用 updateCalSummaryDisplay 并更新贵客率计算器
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
@@ -1784,6 +1819,9 @@ var GuestRateCalculator = (function($) {
                 return;
             }
             syncJadeControlToSource();
+            if (this.id === "star-level-jade") {
+                syncSelectedRecipeQuantitiesFromGuestRateControls();
+            }
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
             }
@@ -1799,6 +1837,8 @@ var GuestRateCalculator = (function($) {
             var input = $("#quantity-value");
             var val = parseInt(input.val()) || 0;
             input.val(val + 1);
+            validateQuantity(input);
+            syncSelectedRecipeQuantitiesFromGuestRateControls();
             if (typeof calCustomResults === 'function') {
                 calCustomResults();
             }
@@ -1809,6 +1849,7 @@ var GuestRateCalculator = (function($) {
             var val = parseInt(input.val()) || 0;
             if (val > 1) {
                 input.val(val - 1);
+                syncSelectedRecipeQuantitiesFromGuestRateControls();
                 if (typeof calCustomResults === 'function') {
                     calCustomResults();
                 }
