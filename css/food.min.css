@@ -2870,6 +2870,11 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     color: #333;
 }
 
+#oneclick-settings-modal .jade-assignment-mode-btn {
+    min-width: 96px;
+    white-space: nowrap;
+}
+
 /* 开关样式 */
 #oneclick-settings-modal .switch-container {
     position: relative;

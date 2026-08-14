@@ -125,7 +125,8 @@ var OneClickQuery = (function($) {
         defaultTime: 8.0,                // 制作时间（小时）
         queryMode: true,                 // 查询模式：true=查询效率，false=查询必来
         useExistingConfig: true,         // 使用场上已有配置：true=使用场上厨师/厨具/心法盘，false=每次重新筛选
-        singleRecipePerRune: false,      // 每种符文只查一个菜谱
+        singleRecipePerRune: false,      // 兼容旧设置：每种符文只查一个菜谱
+        jadeAssignmentMode: 'balanced', // 刷玉分配：balanced/single/maxValue
         goldRuneSelections: [],          // 金符文选择
         silverRuneSelections: [],        // 银符文选择
         bronzeRuneSelections: [],        // 铜符文选择
@@ -160,6 +161,9 @@ var OneClickQuery = (function($) {
             if (stored) {
                 var parsed = JSON.parse(stored);
                 settings = $.extend({}, DEFAULT_SETTINGS, parsed);
+                if (!parsed.jadeAssignmentMode) {
+                    settings.jadeAssignmentMode = parsed.singleRecipePerRune ? 'single' : 'balanced';
+                }
                 // 强制更新默认时间为8小时（如果用户之前保存的是7小时）
                 if (parsed.defaultTime === 7.0 || parsed.defaultTime === 7) {
                     settings.defaultTime = 8.0;
@@ -276,6 +280,25 @@ var OneClickQuery = (function($) {
         }
         ensureJadeRecipeValueMapLoaded();
         return Number(jadeRecipeValueMapCache[recipeName]) || 0;
+    }
+
+    function getJadeAssignmentMode() {
+        var mode = settings.jadeAssignmentMode;
+        return mode === 'single' || mode === 'maxValue' ? mode : 'balanced';
+    }
+
+    function getJadeAssignmentModeLabel(mode) {
+        if (mode === 'single') {
+            return '每种只查一个';
+        }
+        if (mode === 'maxValue') {
+            return '优先玉璧最多';
+        }
+        return '符文平均分配';
+    }
+
+    function isJadeMaxValueMode() {
+        return getJadeAssignmentMode() === 'maxValue';
     }
 
     function flushJadeRankingTableCallbacks(data, error) {
@@ -1509,6 +1532,7 @@ var OneClickQuery = (function($) {
                     conflictWith: recipesWithAdjustedTime[0].recipe.name
                 };
             }
+
         }
 
         for (r = 0; r < selectedRunes.length; r++) {
@@ -3739,7 +3763,7 @@ var OneClickQuery = (function($) {
                 }
                 chefs = ultimatedChefs;
             }
-            
+
             var selectedRunes = getSelectedRunes();
             var jadeBaseRecipeData = null;
             
@@ -3966,7 +3990,7 @@ var OneClickQuery = (function($) {
                     step2Count++;
                 }
             }
-            
+
             // 步骤3：刺客厨师（OpenTime），取前3名（排除已选择的）
             var step3Chefs = getSortedChefs(chefs, onlyShowOwned, false, true, false);
             // 打印前10个刺客厨师，并标记已选中的，显示时间和贵客率
@@ -5314,6 +5338,9 @@ var OneClickQuery = (function($) {
      */
     function createSettingsDialogHtml() {
         var isJadeMode = $("#chk-guest-rate-submode").prop("checked");
+        var displayedAssignmentMode = isJadeMode
+            ? getJadeAssignmentMode()
+            : (settings.singleRecipePerRune ? 'single' : 'balanced');
         var referenceButtonText = isJadeMode ? '金符文效率排行表' : '贵客必来对照表';
         var html = '<div class="modal fade" id="oneclick-settings-modal" tabindex="-1">';
         html += '<div class="modal-dialog modal-lg">';
@@ -5351,7 +5378,7 @@ var OneClickQuery = (function($) {
         html += '</div>';
         html += '</div>';
         
-        // 设置选项行2：使用场上已有配置 + 每种符文分配方式
+        // 设置选项行2：使用场上已有配置 + 刷玉菜谱分配方式
         html += '<div class="row settings-row">';
         html += '<div class="col-xs-6">';
         html += '<div class="setting-card">';
@@ -5364,11 +5391,9 @@ var OneClickQuery = (function($) {
         html += '</div>';
         html += '<div class="col-xs-6">';
         html += '<div class="setting-card">';
-        html += '<label id="singleRecipePerRuneLabel">' + (settings.singleRecipePerRune ? '每种查一个菜谱' : '符文平均分配') + '</label>';
-        html += '<div class="switch-container">';
-        html += '<input type="checkbox" id="setting-singleRecipePerRune"' + (settings.singleRecipePerRune ? ' checked' : '') + '>';
-        html += '<label for="setting-singleRecipePerRune" class="switch-label"></label>';
-        html += '</div>';
+        html += '<label>菜谱分配</label>';
+        html += '<button type="button" class="btn btn-default btn-sm jade-assignment-mode-btn" id="setting-jadeAssignmentMode" data-jade-mode="' + (isJadeMode ? '1' : '0') + '">' +
+            getJadeAssignmentModeLabel(displayedAssignmentMode) + '</button>';
         html += '</div>';
         html += '</div>';
         html += '</div>';
@@ -5851,6 +5876,23 @@ var OneClickQuery = (function($) {
             } else if (id === 'singleRecipePerRune') {
                 $('#singleRecipePerRuneLabel').text(checked ? '每种只查一个' : '符文平均分配');
             }
+        });
+
+        $modal.find('#setting-jadeAssignmentMode').on('click', function() {
+            var currentMode = getJadeAssignmentMode();
+            var isJadeMode = $(this).attr('data-jade-mode') === '1';
+            var nextMode;
+            if (isJadeMode) {
+                nextMode = currentMode === 'balanced'
+                    ? 'single'
+                    : (currentMode === 'single' ? 'maxValue' : 'balanced');
+            } else {
+                nextMode = currentMode === 'balanced' ? 'single' : 'balanced';
+            }
+            setSetting('jadeAssignmentMode', nextMode);
+            // 继续同步旧字段，避免其它历史路径读取到过期设置。
+            setSetting('singleRecipePerRune', nextMode === 'single');
+            $(this).text(getJadeAssignmentModeLabel(nextMode));
         });
         
         // 制作时间输入事件

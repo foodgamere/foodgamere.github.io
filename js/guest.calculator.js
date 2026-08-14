@@ -637,6 +637,11 @@ var GuestRateCalculator = (function($) {
         });
     }
 
+    // 供菜谱选择下拉框读取玉璧表数据，未收录的菜谱返回 0。
+    window.getJadeRecipeValueForDisplay = function(recipeName) {
+        return Number(jadeRecipeValueMap[recipeName]) || 0;
+    };
+
     function getCurrentJadeRecipeValueTotal() {
         var rule = calCustomRule && calCustomRule.rules && calCustomRule.rules[0];
         var custom = rule && rule.custom;
@@ -2360,9 +2365,10 @@ var GuestRateCalculator = (function($) {
      * @param {number} starLevel - 星级 (1-5)
      * @param {number} quantity - 份数 (1-999)
      * @param {string} qualityLevel - 品级 ("1"-"5")
+     * @param {Object} options - 可选计算参数，支持 effectiveOpenTimeSeconds（自动查询的规划营业时长）
      * @returns {Object} 包含所有计算字段的对象
      */
-    function calculateFields(custom, rule, starLevel, quantity, qualityLevel) {
+    function calculateFields(custom, rule, starLevel, quantity, qualityLevel, options) {
         var result = {
             guestRate: 0,           // 贵客率
             critRate: 100,          // 暴击期望，初始为 1 倍赠礼
@@ -2399,6 +2405,12 @@ var GuestRateCalculator = (function($) {
         // 统计 特技符文率(GuestAntiqueDropRate) 技能
         var guestAntiqueDropRateSkills = [];
         var effectiveOpenTimeSeconds = calculateEffectiveOpenTimeSeconds(custom, rule);
+        if (options && options.effectiveOpenTimeSeconds !== undefined && options.effectiveOpenTimeSeconds !== null) {
+            var plannedOpenTimeSeconds = Number(options.effectiveOpenTimeSeconds);
+            if (isFinite(plannedOpenTimeSeconds) && plannedOpenTimeSeconds >= 0) {
+                effectiveOpenTimeSeconds = plannedOpenTimeSeconds;
+            }
+        }
         
         // 遍历所有场上厨师
         for (var c in custom) {
@@ -3357,6 +3369,20 @@ var GuestRateCalculator = (function($) {
         // 保存当前的搜索关键词
         var $searchInput = sp.$menu.find('.bs-searchbox input');
         var searchKeyword = $searchInput.length ? $searchInput.val() : '';
+        var isJadeMode = $("#chk-guest-rate-submode").prop("checked");
+
+        function compareRecipes(a, b) {
+            if (isJadeMode) {
+                var aJade = Number($(a).attr('data-jade-value') || 0);
+                var bJade = Number($(b).attr('data-jade-value') || 0);
+                if (aJade !== bJade) return bJade - aJade;
+            }
+
+            var aTime = Number($(a).attr('data-time') || 999999);
+            var bTime = Number($(b).attr('data-time') || 999999);
+            if (aTime !== bTime) return aTime - bTime;
+            return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
+        }
         
         // 1) 恢复原始的 option 列表
         $select.html(originalHtml);
@@ -3425,13 +3451,8 @@ var GuestRateCalculator = (function($) {
                 var recipes = recipesByRune[runeName];
                 
                 if (recipes && recipes.length > 0) {
-                    // 按时间排序该符文下的菜谱
-                    recipes.sort(function(a, b) {
-                        var aTime = Number($(a).attr('data-time') || 999999);
-                        var bTime = Number($(b).attr('data-time') || 999999);
-                        if (aTime !== bTime) return aTime - bTime;
-                        return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
-                    });
+                    // 刷玉模式按玉璧降序，普通符文模式按时间升序。
+                    recipes.sort(compareRecipes);
                     
                     // 创建 optgroup，标签包含菜谱数量
                     var labelWithCount = runeName + ' (' + recipes.length + ')';
@@ -3447,12 +3468,7 @@ var GuestRateCalculator = (function($) {
             for (var runeName in recipesByRune) {
                 if (runeList.indexOf(runeName) === -1) {
                     var recipes = recipesByRune[runeName];
-                    recipes.sort(function(a, b) {
-                        var aTime = Number($(a).attr('data-time') || 999999);
-                        var bTime = Number($(b).attr('data-time') || 999999);
-                        if (aTime !== bTime) return aTime - bTime;
-                        return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
-                    });
+                    recipes.sort(compareRecipes);
                     
                     // 创建 optgroup，标签包含菜谱数量
                     var labelWithCount = runeName + ' (' + recipes.length + ')';
@@ -3464,9 +3480,14 @@ var GuestRateCalculator = (function($) {
                 }
             }
         } else if (!categoryName) {
-            // 不排序且显示全部：恢复原始顺序
+            // 刷玉模式下，“全部”也按玉璧数降序；其它模式恢复原始顺序。
             var opts = $select.find('option').toArray();
             opts.sort(function(a, b) {
+                if (isJadeMode) {
+                    var aJade = Number($(a).attr('data-jade-value') || 0);
+                    var bJade = Number($(b).attr('data-jade-value') || 0);
+                    if (aJade !== bJade) return bJade - aJade;
+                }
                 return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
             });
             $select.empty().append(opts);
