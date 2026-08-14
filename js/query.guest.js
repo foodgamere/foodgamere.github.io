@@ -126,7 +126,7 @@ var OneClickQuery = (function($) {
         queryMode: true,                 // 查询模式：true=查询效率，false=查询必来
         useExistingConfig: true,         // 使用场上已有配置：true=使用场上厨师/厨具/心法盘，false=每次重新筛选
         singleRecipePerRune: false,      // 兼容旧设置：每种符文只查一个菜谱
-        jadeAssignmentMode: 'balanced', // 刷玉分配：balanced/single/maxValue
+        jadeAssignmentMode: 'balanced', // 刷玉分配：balanced/single
         goldRuneSelections: [],          // 金符文选择
         silverRuneSelections: [],        // 银符文选择
         bronzeRuneSelections: [],        // 铜符文选择
@@ -284,21 +284,14 @@ var OneClickQuery = (function($) {
 
     function getJadeAssignmentMode() {
         var mode = settings.jadeAssignmentMode;
-        return mode === 'single' || mode === 'maxValue' ? mode : 'balanced';
+        return mode === 'single' ? mode : 'balanced';
     }
 
     function getJadeAssignmentModeLabel(mode) {
         if (mode === 'single') {
             return '每种只查一个';
         }
-        if (mode === 'maxValue') {
-            return '优先玉璧最多';
-        }
         return '符文平均分配';
-    }
-
-    function isJadeMaxValueMode() {
-        return getJadeAssignmentMode() === 'maxValue';
     }
 
     function flushJadeRankingTableCallbacks(data, error) {
@@ -415,7 +408,7 @@ var OneClickQuery = (function($) {
             return 0;
         }
 
-        var actualGuestRateRounded = Math.floor((groupStats.actualGuestRate || 0) * 100) / 100;
+        var actualGuestRateRounded = Math.floor(Math.min(100, Math.max(0, groupStats.actualGuestRate || 0)) * 100) / 100;
         runeRateValue = Number(runeRateValue) || 0;
         var critRateRounded = Math.floor((groupStats.critRate || 0) * 100) / 100;
         var hundredPotOutput = 0.01 * actualGuestRateRounded * runeRateValue * critRateRounded;
@@ -3484,7 +3477,7 @@ var OneClickQuery = (function($) {
         totalValueSum = usageState.totalValueSum;
 
         var jadeBusinessIntervalSeconds = 30;
-        var actualGuestRate = groupStats ? (groupStats.actualGuestRate || 0) : 0;
+        var actualGuestRate = Math.min(100, Math.max(0, groupStats ? (groupStats.actualGuestRate || 0) : 0));
         var critRate = groupStats ? (groupStats.critRate || 0) : 0;
         var scatterRate = Math.max(0, 100 - (groupStats ? (groupStats.runeRate || 0) : 0));
         var dailyCycles = totalTimeSum > 0 ? 86400 / (totalTimeSum + jadeBusinessIntervalSeconds) : 0;
@@ -3505,7 +3498,7 @@ var OneClickQuery = (function($) {
             return 0;
         }
 
-        var actualGuestRate = groupStats.actualGuestRate || 0;
+        var actualGuestRate = Math.min(100, Math.max(0, groupStats.actualGuestRate || 0));
         var critRate = groupStats.critRate || 0;
         var scatterRate = Math.max(0, 100 - (groupStats.runeRate || 0));
         var timePercentage = Math.max(groupStats.timeBonus || 0, 0.01);
@@ -5341,7 +5334,7 @@ var OneClickQuery = (function($) {
         var displayedAssignmentMode = isJadeMode
             ? getJadeAssignmentMode()
             : (settings.singleRecipePerRune ? 'single' : 'balanced');
-        var referenceButtonText = isJadeMode ? '金符文效率排行表' : '贵客必来对照表';
+        var referenceButtonText = isJadeMode ? '符文效率排行表' : '贵客必来对照表';
         var html = '<div class="modal fade" id="oneclick-settings-modal" tabindex="-1">';
         html += '<div class="modal-dialog modal-lg">';
         html += '<div class="modal-content">';
@@ -5534,7 +5527,7 @@ var OneClickQuery = (function($) {
             return '<div class="jade-ranking-loading jade-ranking-error">加载失败</div>';
         }
 
-        var title = escapeHtml(tableData.title || '金符文效率排行表');
+        var title = escapeHtml(tableData.title || '符文效率排行表');
         var html = '<div class="jade-ranking-table-container">';
         html += '<div class="jade-ranking-sheet">';
         html += '<table class="table table-bordered jade-ranking-table">';
@@ -5586,7 +5579,7 @@ var OneClickQuery = (function($) {
         html += '<div class="modal-content">';
         html += '<div class="modal-header jade-ranking-modal-header">';
         html += '<div class="jade-ranking-modal-header-main">';
-        html += '<h4 class="modal-title">金符文效率排行表</h4>';
+        html += '<h4 class="modal-title">符文效率排行表</h4>';
         html += createJadeRankingRuneFilterHtml(tableData);
         html += '<button type="button" class="close jade-ranking-close" data-dismiss="modal">&times;</button>';
         html += '</div>';
@@ -5880,15 +5873,8 @@ var OneClickQuery = (function($) {
 
         $modal.find('#setting-jadeAssignmentMode').on('click', function() {
             var currentMode = getJadeAssignmentMode();
-            var isJadeMode = $(this).attr('data-jade-mode') === '1';
             var nextMode;
-            if (isJadeMode) {
-                nextMode = currentMode === 'balanced'
-                    ? 'single'
-                    : (currentMode === 'single' ? 'maxValue' : 'balanced');
-            } else {
-                nextMode = currentMode === 'balanced' ? 'single' : 'balanced';
-            }
+            nextMode = currentMode === 'balanced' ? 'single' : 'balanced';
             setSetting('jadeAssignmentMode', nextMode);
             // 继续同步旧字段，避免其它历史路径读取到过期设置。
             setSetting('singleRecipePerRune', nextMode === 'single');

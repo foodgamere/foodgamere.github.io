@@ -175,11 +175,12 @@ var GuestRateCalculator = (function($) {
      * @returns {number} 百锅产出
      */
     function calculateHundredPotOutput(actualGuestRate, runeRate, critRate) {
-        if (actualGuestRate <= 0.0) {
+        var effectiveGuestRate = Math.min(100, Math.max(0, Number(actualGuestRate) || 0));
+        if (effectiveGuestRate <= 0.0) {
             return 0.0;
         }
         
-        var result = 0.01 * actualGuestRate * runeRate * critRate;
+        var result = 0.01 * effectiveGuestRate * runeRate * critRate;
         return Math.trunc(result) / 100.0;
     }
     
@@ -193,11 +194,12 @@ var GuestRateCalculator = (function($) {
      * @returns {number} 单位食材
      */
     function calculateUnitFood(actualGuestRate, runeRate, critRate, quantity) {
-        if (actualGuestRate <= 0.0 || quantity <= 0) {
+        var effectiveGuestRate = Math.min(100, Math.max(0, Number(actualGuestRate) || 0));
+        if (effectiveGuestRate <= 0.0 || quantity <= 0) {
             return 0.0;
         }
         
-        var result = 0.1 / quantity * actualGuestRate * runeRate * critRate;
+        var result = 0.1 / quantity * effectiveGuestRate * runeRate * critRate;
         return Math.trunc(result) / 100.0;
     }
     
@@ -677,7 +679,7 @@ var GuestRateCalculator = (function($) {
     function calculateJadeModeOutputs() {
         var jadeBusinessIntervalSeconds = getMaterialIntervalSeconds("#material-interval-input-jade");
         var totalTimeSeconds = getCurrentTotalTimeSeconds();
-        var actualGuestRate = parseFloat($("#actual-guest-rate").text()) || 0;
+        var actualGuestRate = Math.min(100, Math.max(0, parseFloat($("#actual-guest-rate").text()) || 0));
         var runeRate = parseFloat($("#rune-rate").text()) || 0;
         var critRate = parseFloat($("#total-crit-rate").text()) || 0;
         var scatterRate = Math.max(0, 100 - runeRate);
@@ -2767,7 +2769,7 @@ var GuestRateCalculator = (function($) {
         // ========== 计算百锅产出 ==========
         if (result.actualGuestRate !== undefined && result.runeRate !== undefined && result.critRate !== undefined) {
             // 对实际贵客率截断取整保留两位小数
-            var actualGuestRateRounded = Math.floor(result.actualGuestRate * 100) / 100;
+            var actualGuestRateRounded = Math.floor(Math.min(100, Math.max(0, result.actualGuestRate)) * 100) / 100;
             // 符文率是整数，不需要处理
             var runeRateValue = result.runeRate;
             // 对暴击期望截断取整保留两位小数
