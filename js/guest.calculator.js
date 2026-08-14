@@ -676,22 +676,79 @@ var GuestRateCalculator = (function($) {
         return totalValue;
     }
 
+    // 按每道菜谱自己的星级、份数和制作品级计算玉璧期望。
+    function calculateCurrentJadeRecipeExpectations() {
+        var rule = calCustomRule && calCustomRule.rules && calCustomRule.rules[0];
+        var custom = rule && rule.custom;
+        var totalExpected = 0;
+        var totalValue = 0;
+        var weightedScatter = 0;
+
+        if (!custom || !rule) {
+            return { totalExpected: 0, totalValue: 0, scatterRate: 0 };
+        }
+
+        for (var c in custom) {
+            if (!custom.hasOwnProperty(c)) {
+                continue;
+            }
+
+            var recipes = custom[c].recipes || [];
+            for (var r in recipes) {
+                if (!recipes.hasOwnProperty(r)) {
+                    continue;
+                }
+
+                var recipeItem = recipes[r];
+                var recipeData = recipeItem && recipeItem.data;
+                var quantity = parseInt(recipeItem && recipeItem.quantity, 10) || 0;
+                if (!recipeData || !recipeData.name || quantity <= 0) {
+                    continue;
+                }
+
+                var jadeValue = Number(jadeRecipeValueMap[recipeData.name]) || 0;
+                if (jadeValue <= 0) {
+                    continue;
+                }
+
+                var rankValue = normalizeRecipeRankValue(recipeItem.rankVal, recipeItem);
+                var fields = calculateFields(
+                    custom,
+                    rule,
+                    Number(recipeData.rarity) || 5,
+                    quantity,
+                    String(rankValue || 1),
+                    { useEmptyRecipePerRankFallback: false }
+                );
+                var actualGuestRate = Math.min(100, Math.max(0, Number(fields.actualGuestRate) || 0));
+                var scatterRate = Math.max(0, 100 - (Number(fields.runeRate) || 0));
+                var critRate = Math.max(0, Number(fields.critRate) || 0);
+                var recipeExpected = jadeValue * (actualGuestRate / 100) * (scatterRate / 100) * (critRate / 100);
+
+                totalValue += jadeValue;
+                totalExpected += recipeExpected;
+                weightedScatter += jadeValue * scatterRate;
+            }
+        }
+
+        return {
+            totalExpected: totalExpected,
+            totalValue: totalValue,
+            scatterRate: totalValue > 0 ? weightedScatter / totalValue : 0
+        };
+    }
+
     function calculateJadeModeOutputs() {
         var jadeBusinessIntervalSeconds = getMaterialIntervalSeconds("#material-interval-input-jade");
         var totalTimeSeconds = getCurrentTotalTimeSeconds();
-        var actualGuestRate = Math.min(100, Math.max(0, parseFloat($("#actual-guest-rate").text()) || 0));
-        var runeRate = parseFloat($("#rune-rate").text()) || 0;
-        var critRate = parseFloat($("#total-crit-rate").text()) || 0;
-        var scatterRate = Math.max(0, 100 - runeRate);
         var dailyCycles = totalTimeSeconds > 0 ? 86400 / (totalTimeSeconds + jadeBusinessIntervalSeconds) : 0;
-        var critMultiplier = critRate / 100;
-        var recipeJadeValueTotal = getCurrentJadeRecipeValueTotal();
-        var dailyJade = dailyCycles * (actualGuestRate / 100) * (scatterRate / 100) * critMultiplier * recipeJadeValueTotal;
+        var recipeExpectations = calculateCurrentJadeRecipeExpectations();
+        var dailyJade = dailyCycles * recipeExpectations.totalExpected;
         var materialDetails = getJadeMaterialDetails(dailyCycles);
         var dailyMaterial = materialDetails.totalDailyAmount;
 
         return {
-            scatterRate: scatterRate,
+            scatterRate: recipeExpectations.scatterRate,
             dailyJade: dailyJade,
             dailyMaterial: dailyMaterial,
             materialDetails: materialDetails
@@ -2587,13 +2644,14 @@ var GuestRateCalculator = (function($) {
                         
                         var qualifiedRecipeCount = 0;
                         
-                        // 如果没有菜谱信息（一键查询场景），默认使用最高暴击率（3个神级菜谱）
+                        // 自动查询前期尚未分配菜谱时可以按上限估算；最终配置结算时按实际菜谱计算。
                         if (recipes.length === 0) {
-                            qualifiedRecipeCount = 3;
+                            qualifiedRecipeCount = options && options.useEmptyRecipePerRankFallback === false ? 0 : 3;
                         } else {
                             for (var r = 0; r < recipes.length; r++) {
                                 var recipe = recipes[r];
-                                if (recipe.data && recipe.rankVal >= conditionValue) {
+                                var recipeRankValue = normalizeRecipeRankValue(recipe.rankVal, recipe);
+                                if (recipe.data && recipeRankValue >= conditionValue) {
                                     qualifiedRecipeCount++;
                                 }
                             }
@@ -2612,11 +2670,20 @@ var GuestRateCalculator = (function($) {
                     } else {
                         // 非 PerRank 类型
                         var desc = source.desc || "";
-                        // 从描述中提取"稀有客人赠礼数量XX%"或"贵客赠礼数量XX%"中的百分比
-                        var percentMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%/);
-                        var basePercent = percentMatch ? parseInt(percentMatch[1]) : 0;
-                        var multiplier = (skill.value || 100) / 100;
-                        var critIncrease = basePercent * multiplier;
+                        var probabilityMatch = desc.match(/(?:稀有客人|贵客)赠礼数量(\d+)%概率提升(\d+)%/);
+                        var guaranteedMatch = desc.match(/(?:稀有客人|贵客)赠礼数量提升(\d+)%/);
+                        var critIncrease = 0;
+
+                        if (probabilityMatch) {
+                            // “概率提升”描述表示赠礼数量增加的期望值：概率 × 增幅。
+                            critIncrease = Number(probabilityMatch[1]) * Number(probabilityMatch[2]) / 100;
+                        } else if (guaranteedMatch) {
+                            // 没有概率前缀时是必定增加，直接加入描述中的增幅。
+                            critIncrease = Number(guaranteedMatch[1]);
+                        } else {
+                            // 兼容没有标准描述文本的旧数据，技能 value 按百分比处理。
+                            critIncrease = Number(skill.value) || 0;
+                        }
                         result.critRate += critIncrease;
                     }
                 }

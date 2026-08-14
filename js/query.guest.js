@@ -3476,20 +3476,136 @@ var OneClickQuery = (function($) {
         totalTimeSum = usageState.totalTimeSum;
         totalValueSum = usageState.totalValueSum;
 
+        var recipeExpectedTotal = calculateJadeSelectionExpectedTotal(selections, groupStats, totalTimeSum);
+
         var jadeBusinessIntervalSeconds = 30;
-        var actualGuestRate = Math.min(100, Math.max(0, groupStats ? (groupStats.actualGuestRate || 0) : 0));
-        var critRate = groupStats ? (groupStats.critRate || 0) : 0;
-        var scatterRate = Math.max(0, 100 - (groupStats ? (groupStats.runeRate || 0) : 0));
         var dailyCycles = totalTimeSum > 0 ? 86400 / (totalTimeSum + jadeBusinessIntervalSeconds) : 0;
-        var dailyJade = dailyCycles * (actualGuestRate / 100) * (scatterRate / 100) * (critRate / 100) * totalValueSum;
+        var dailyJade = dailyCycles * recipeExpectedTotal.totalExpected;
 
         return {
             selections: selections,
             totalCookingTime: totalTimeSum,
             recipeJadeValueTotal: totalValueSum,
+            recipeJadeExpectedTotal: recipeExpectedTotal.totalExpected,
             dailyJade: dailyJade,
-            scatterRate: scatterRate,
+            scatterRate: recipeExpectedTotal.scatterRate,
             dailyCycles: dailyCycles
+        };
+    }
+
+    function buildJadeSelectionCalculationCustom(groupStats, selections) {
+        var baseCustom = groupStats && groupStats._customForCalc;
+        var custom = {};
+        var c;
+
+        if (!baseCustom) {
+            return null;
+        }
+
+        for (c in baseCustom) {
+            if (!baseCustom.hasOwnProperty(c)) {
+                continue;
+            }
+            custom[c] = {
+                chef: baseCustom[c].chef || null,
+                equip: baseCustom[c].equip || null,
+                recipes: []
+            };
+        }
+
+        for (var i = 0; i < selections.length; i++) {
+            var selection = selections[i];
+            if (!selection || !selection.recipe) {
+                continue;
+            }
+
+            var chefIndex = Number(selection.chefIndex);
+            if (!custom[chefIndex]) {
+                custom[chefIndex] = { chef: null, equip: null, recipes: [] };
+            }
+
+            var quantity = Number(selection.quantityForTime || selection.quantity) || 0;
+            if (quantity <= 0) {
+                continue;
+            }
+
+            custom[chefIndex].recipes.push({
+                data: selection.recipe,
+                quantity: quantity,
+                totalTime: Number(selection.cookingTime) || 0,
+                rankVal: Number(selection.rank) || 1,
+                rankDisp: getJadeRankTextByValue(Number(selection.rank) || 1)
+            });
+        }
+
+        return custom;
+    }
+
+    function getJadeRankTextByValue(rankValue) {
+        return ['', '可', '优', '特', '神', '传'][Number(rankValue) || 1] || '可';
+    }
+
+    function calculateJadeSelectionExpectedTotal(selections, groupStats, totalTimeSeconds) {
+        var totalExpected = 0;
+        var totalValue = 0;
+        var weightedScatter = 0;
+        var custom = buildJadeSelectionCalculationCustom(groupStats, selections || []);
+        var rule = groupStats && groupStats._rule;
+
+        if (!custom || !rule || typeof GuestRateCalculator === 'undefined' ||
+            typeof GuestRateCalculator.calculateFields !== 'function') {
+            var fallbackActual = Math.min(100, Math.max(0, groupStats && groupStats.actualGuestRate || 0));
+            var fallbackCrit = Math.max(0, groupStats && groupStats.critRate || 0);
+            var fallbackScatter = Math.max(0, 100 - (groupStats && groupStats.runeRate || 0));
+            for (var f = 0; f < (selections || []).length; f++) {
+                var fallbackValue = Number(selections[f] && selections[f].jadeValue) || 0;
+                totalValue += fallbackValue;
+                totalExpected += fallbackValue * (fallbackActual / 100) * (fallbackScatter / 100) * (fallbackCrit / 100);
+                weightedScatter += fallbackValue * fallbackScatter;
+            }
+            return {
+                totalExpected: totalExpected,
+                totalValue: totalValue,
+                scatterRate: totalValue > 0 ? weightedScatter / totalValue : 0
+            };
+        }
+
+        var fieldsOptions = {
+            effectiveOpenTimeSeconds: Number(totalTimeSeconds) || 0,
+            useEmptyRecipePerRankFallback: false
+        };
+        for (var i = 0; i < (selections || []).length; i++) {
+            var selection = selections[i];
+            var recipe = selection && selection.recipe;
+            var quantity = Number(selection && (selection.quantityForTime || selection.quantity)) || 0;
+            var jadeValue = Number(selection && selection.jadeValue) || 0;
+            if (!recipe || quantity <= 0 || jadeValue <= 0) {
+                continue;
+            }
+
+            var rankValue = Number(selection.rank) || 1;
+            var fields = GuestRateCalculator.calculateFields(
+                custom,
+                rule,
+                Number(recipe.rarity) || 5,
+                quantity,
+                String(rankValue),
+                fieldsOptions
+            );
+            var actualGuestRate = Math.min(100, Math.max(0, Number(fields.actualGuestRate) || 0));
+            var scatterRate = Math.max(0, 100 - (Number(fields.runeRate) || 0));
+            var critRate = Math.max(0, Number(fields.critRate) || 0);
+            var recipeExpected = jadeValue * (actualGuestRate / 100) * (scatterRate / 100) * (critRate / 100);
+
+            totalValue += jadeValue;
+            totalExpected += recipeExpected;
+            weightedScatter += jadeValue * scatterRate;
+        }
+
+        return {
+            totalExpected: totalExpected,
+            totalValue: totalValue,
+            scatterRate: totalValue > 0 ? weightedScatter / totalValue : 0
         };
     }
 
@@ -3921,7 +4037,9 @@ var OneClickQuery = (function($) {
                     calcStarLevel: calcStarLevel,
                     calcQuantity: calcQuantity,
                     requiredPortions: requiredPortions,
-                    canAchieveBilai: canAchieve
+                    canAchieveBilai: canAchieve,
+                    _customForCalc: customForCalc,
+                    _rule: rule
                 };
                 
                 if (!isQueryEfficiencyMode) {
@@ -4189,7 +4307,9 @@ var OneClickQuery = (function($) {
                     requiredPortions: requiredPortions,
                     canAchieveBilai: canAchieve,
                     calcStarLevel: calcStarLevel,      // 计算使用的星级
-                    calcQuantity: actualQuantity       // 计算使用的份数
+                    calcQuantity: actualQuantity,       // 计算使用的份数
+                    _customForCalc: customForCalc,
+                    _rule: rule
                 };
                 
                 if (isJadeMode) {
