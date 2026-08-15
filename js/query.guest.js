@@ -65,33 +65,27 @@ var OneClickQuery = (function($) {
      */
     function getUserMaxQuantity(starLevel) {
         var baseMax = BASE_MAX_QUANTITY_MAP[starLevel] || 15;
-        var ultimateBonus = 0;
-        var ruleBonus = 0;
+        var totalBonus = 0;
         
-        // 从 calCustomRule.rules[0].calGlobalUltimateData 获取修炼加成
+        // 与菜谱卡的 limitVal 保持一致：只叠加当前生效的全局和活动上限效果。
         if (typeof calCustomRule !== 'undefined' && calCustomRule.rules && calCustomRule.rules[0]) {
             var rule = calCustomRule.rules[0];
-            
-            // 获取修炼加成 (MaxEquipLimit)
-            if (rule.calGlobalUltimateData && Array.isArray(rule.calGlobalUltimateData)) {
-                for (var i = 0; i < rule.calGlobalUltimateData.length; i++) {
-                    var data = rule.calGlobalUltimateData[i];
-                    if (data.type === 'MaxEquipLimit' && data.rarity === starLevel) {
-                        ultimateBonus = data.value || 0;
-                        break;
+            var limitEffectSources = [rule.calGlobalUltimateData, rule.calActivityUltimateData];
+            for (var sourceIndex = 0; sourceIndex < limitEffectSources.length; sourceIndex++) {
+                var effects = limitEffectSources[sourceIndex];
+                if (!Array.isArray(effects)) {
+                    continue;
+                }
+                for (var i = 0; i < effects.length; i++) {
+                    var data = effects[i];
+                    if (data && data.type === 'MaxEquipLimit' && Number(data.rarity) === Number(starLevel)) {
+                        totalBonus += Number(data.value) || 0;
                     }
                 }
             }
-            
-            // 获取规则加成 (skill.MaxLimit)
-            if (rule.skill && rule.skill.MaxLimit) {
-                ruleBonus = Number(rule.skill.MaxLimit[starLevel]) || 0;
-            }
         }
         
-        var totalMax = baseMax + ultimateBonus + ruleBonus;
-        
-        return totalMax;
+        return baseMax + totalBonus;
     }
 
     /**

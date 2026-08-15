@@ -81,10 +81,22 @@ var GuestRateCalculator = (function($) {
      */
     function validateQuantity(input) {
         var val = parseInt(input.val()) || 1;
+        var starSelector = String(input.attr('id') || '').indexOf('-jade') >= 0 ? '#star-level-jade' : '#star-level';
+        var starLevel = parseInt($(starSelector).val(), 10) || 5;
+        var maxQuantity = null;
+        if (typeof OneClickQuery !== 'undefined' && OneClickQuery && typeof OneClickQuery.getUserMaxQuantity === 'function') {
+            var configuredMax = Number(OneClickQuery.getUserMaxQuantity(starLevel));
+            if (isFinite(configuredMax)) {
+                maxQuantity = configuredMax;
+            }
+        }
+        if (maxQuantity === null) {
+            maxQuantity = ({1: 40, 2: 30, 3: 25, 4: 20, 5: 15})[starLevel] || 15;
+        }
         if (val < 1) {
             input.val(1);
-        } else if (val > 999) {
-            input.val(999);
+        } else if (val > maxQuantity) {
+            input.val(maxQuantity);
         }
     }
     
@@ -1610,6 +1622,10 @@ var GuestRateCalculator = (function($) {
 
         var originalCalCustomResults = calCustomResults;
         calCustomResults = function() {
+            if (typeof calCustomRule !== 'undefined' && calCustomRule && calCustomRule.isGuestRate === true) {
+                validateQuantity($("#quantity-value"));
+                validateQuantity($("#quantity-value-jade"));
+            }
             var result = originalCalCustomResults.apply(this, arguments);
             syncGuestRateModeSupplementOutputs();
             return result;
@@ -1731,6 +1747,8 @@ var GuestRateCalculator = (function($) {
         var averageQuantity = Math.max(1, Math.round(totalQuantity / recipeCount));
         $("#quantity-value").val(averageQuantity);
         $("#quantity-value-jade").val(averageQuantity);
+        validateQuantity($("#quantity-value"));
+        validateQuantity($("#quantity-value-jade"));
         return true;
     }
 
