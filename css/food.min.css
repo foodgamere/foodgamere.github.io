@@ -716,13 +716,18 @@ table.dataTable tbody>tr.selected,table.dataTable tbody>tr>.selected {
     color: #337ab7
 }
 
-.recipe-box .recipe-quantity .available,.recipe-box .recipe-quantity .max {
+.recipe-box .recipe-quantity .available,.recipe-box .recipe-quantity .max,.recipe-box .recipe-quantity .guest-arrival-flag {
     font-size: 90%;
     white-space: nowrap
 }
 
 .recipe-box .recipe-quantity .available {
     color: red;
+    font-weight: 700
+}
+
+.recipe-box .recipe-quantity .guest-arrival-flag {
+    color: #2e8b57;
     font-weight: 700
 }
 

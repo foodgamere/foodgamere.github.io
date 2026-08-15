@@ -21,9 +21,9 @@
     <script type="text/javascript" src="js/script.min.js?v=23"></script>
     <script type="text/javascript" src="js/common.min.js?v=77"></script>
     <link rel="stylesheet" type="text/css" href="css/food.min.css?v=87" />
-    <script type="text/javascript" src="js/guest.calculator.js?v=13"></script>
-    <script type="text/javascript" src="js/query.guest.js?v=21"></script>
-    <script type="text/javascript" src="js/food.min.js?v=285"></script>
+    <script type="text/javascript" src="js/guest.calculator.js?v=18"></script>
+    <script type="text/javascript" src="js/query.guest.js?v=23"></script>
+    <script type="text/javascript" src="js/food.min.js?v=290"></script>
     <script type="text/javascript" src="js/query.cultivate.js?v=4"></script>
     <script type="text/javascript" src="js/query.collection.js?v=5"></script>
     <script type="text/javascript" src="js/banquet.optimizer.js?v=4"></script>
@@ -1127,6 +1127,12 @@
                                         </span>
                                         <span class="input-group-btn">
                                             <a id="btn-cal-custom-save" class="btn btn-default">保存</a>
+                                        </span>
+                                        <span class="input-group-btn">
+                                            <a id="btn-cal-custom-export" class="btn btn-default">导出</a>
+                                        </span>
+                                        <span class="input-group-btn">
+                                            <a id="btn-cal-custom-import" class="btn btn-default">导入</a>
                                         </span>
                                     </div>
                                     <button id="btn-cal-import-run" class="btn btn-default" type="button">
@@ -2794,6 +2800,7 @@
                                                 <div class="recipe-quantity">
                                                     <input type="number" min="0" class="form-control arrow"> /
                                                     <span class="max"></span>
+                                                    <span class="guest-arrival-flag"></span>
                                                     <span class="available"></span>
                                                 </div>
                                                 <div class="recipe-ex">
@@ -3144,6 +3151,26 @@
                         <textarea id="input-import-run" class="form-control"></textarea>
                     </div>
                     <button id="btn-import-run" class="btn btn-default" type="button">导入</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal center" id="cal-custom-import-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header text-center">
+                    <a class="close" data-dismiss="modal"><span>&times;</span></a>
+                    <span class="modal-title">导入计算器方案</span>
+                </div>
+                <div class="modal-body">
+                    <p class="text-primary">请粘贴导出的方案内容</p>
+                    <textarea id="input-cal-custom-import" class="form-control" rows="12"
+                        placeholder="粘贴 JSON 内容"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-cal-custom-import-confirm" class="btn btn-primary" type="button">导入</button>
+                    <button class="btn btn-default" type="button" data-dismiss="modal">取消</button>
                 </div>
             </div>
         </div>

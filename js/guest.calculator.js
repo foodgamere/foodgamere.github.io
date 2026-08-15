@@ -1596,6 +1596,9 @@ var GuestRateCalculator = (function($) {
             })
             .off("changed.bs.select.guestSupplementChef", "select.select-picker-chef, select.select-picker-equip, select.select-picker-disk-level, select.select-picker-amber, select.select-picker-condiment")
             .on("changed.bs.select.guestSupplementChef", "select.select-picker-chef, select.select-picker-equip, select.select-picker-disk-level, select.select-picker-amber, select.select-picker-condiment", function() {
+                if (typeof OneClickQuery !== 'undefined' && OneClickQuery && typeof OneClickQuery.updateCurrentQueryModeQuantity === 'function') {
+                    OneClickQuery.updateCurrentQueryModeQuantity();
+                }
                 scheduleGuestSupplementOutputsSync();
             });
     }
@@ -1684,6 +1687,51 @@ var GuestRateCalculator = (function($) {
                 }
             }
         }
+    }
+
+    /**
+     * 星级切换时，使用场上该星级菜谱份数的平均值作为当前份数。
+     * 没有该星级菜谱时保留当前控件值。
+     */
+    function syncGuestRateQuantityFromSceneAverage() {
+        if (!isGuestRateMode() || !calCustomRule || !calCustomRule.rules || !calCustomRule.rules.length) {
+            return false;
+        }
+
+        var starLevel = parseInt($("#star-level").val(), 10);
+        var custom = calCustomRule.rules[0].custom;
+        if (!custom || isNaN(starLevel)) {
+            return false;
+        }
+
+        var totalQuantity = 0;
+        var recipeCount = 0;
+        for (var c in custom) {
+            if (!custom.hasOwnProperty(c)) {
+                continue;
+            }
+            var recipes = custom[c].recipes || [];
+            for (var r in recipes) {
+                var recipe = recipes[r];
+                if (!recipe || !recipe.data || Number(recipe.data.rarity) !== starLevel) {
+                    continue;
+                }
+                var quantity = Number(recipe.quantity);
+                if (isFinite(quantity)) {
+                    totalQuantity += quantity;
+                    recipeCount++;
+                }
+            }
+        }
+
+        if (recipeCount === 0) {
+            return false;
+        }
+
+        var averageQuantity = Math.max(1, Math.round(totalQuantity / recipeCount));
+        $("#quantity-value").val(averageQuantity);
+        $("#quantity-value-jade").val(averageQuantity);
+        return true;
     }
 
     function syncJadeDualControlToSource() {
@@ -1870,6 +1918,7 @@ var GuestRateCalculator = (function($) {
         // 监听星级和品级变化
         $("#star-level, #quality-level").on("changed.bs.select", function() {
             if (this.id === "star-level") {
+                syncGuestRateQuantityFromSceneAverage();
                 syncSelectedRecipeQuantitiesFromGuestRateControls();
             }
             // 触发正常营业计算，这会调用 updateCalSummaryDisplay 并更新贵客率计算器
@@ -1884,6 +1933,7 @@ var GuestRateCalculator = (function($) {
             }
             syncJadeControlToSource();
             if (this.id === "star-level-jade") {
+                syncGuestRateQuantityFromSceneAverage();
                 syncSelectedRecipeQuantitiesFromGuestRateControls();
             }
             if (typeof calCustomResults === 'function') {
@@ -3441,14 +3491,18 @@ var GuestRateCalculator = (function($) {
         var isJadeMode = $("#chk-guest-rate-submode").prop("checked");
 
         function compareRecipes(a, b) {
+            var aTime = Number($(a).attr('data-time') || 999999);
+            var bTime = Number($(b).attr('data-time') || 999999);
             if (isJadeMode) {
                 var aJade = Number($(a).attr('data-jade-value') || 0);
                 var bJade = Number($(b).attr('data-jade-value') || 0);
                 if (aJade !== bJade) return bJade - aJade;
-            }
 
-            var aTime = Number($(a).attr('data-time') || 999999);
-            var bTime = Number($(b).attr('data-time') || 999999);
+                // 玉璧相同时，按排行表中的“时间/玉璧数”效率升序。
+                var aEfficiency = aJade > 0 ? aTime / aJade : Number.POSITIVE_INFINITY;
+                var bEfficiency = bJade > 0 ? bTime / bJade : Number.POSITIVE_INFINITY;
+                if (aEfficiency !== bEfficiency) return aEfficiency - bEfficiency;
+            }
             if (aTime !== bTime) return aTime - bTime;
             return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
         }
@@ -3520,7 +3574,7 @@ var GuestRateCalculator = (function($) {
                 var recipes = recipesByRune[runeName];
                 
                 if (recipes && recipes.length > 0) {
-                    // 刷玉模式按玉璧降序，普通符文模式按时间升序。
+                    // 刷玉模式按玉璧降序，同玉璧按时间/玉璧数效率升序。
                     recipes.sort(compareRecipes);
                     
                     // 创建 optgroup，标签包含菜谱数量
@@ -3549,13 +3603,19 @@ var GuestRateCalculator = (function($) {
                 }
             }
         } else if (!categoryName) {
-            // 刷玉模式下，“全部”也按玉璧数降序；其它模式恢复原始顺序。
+            // 刷玉模式下，“全部”按玉璧降序，同玉璧按时间/玉璧数效率升序。
             var opts = $select.find('option').toArray();
             opts.sort(function(a, b) {
+                var aTime = Number($(a).attr('data-time') || 999999);
+                var bTime = Number($(b).attr('data-time') || 999999);
                 if (isJadeMode) {
                     var aJade = Number($(a).attr('data-jade-value') || 0);
                     var bJade = Number($(b).attr('data-jade-value') || 0);
                     if (aJade !== bJade) return bJade - aJade;
+                    var aEfficiency = aJade > 0 ? aTime / aJade : Number.POSITIVE_INFINITY;
+                    var bEfficiency = bJade > 0 ? bTime / bJade : Number.POSITIVE_INFINITY;
+                    if (aEfficiency !== bEfficiency) return aEfficiency - bEfficiency;
+                    if (aTime !== bTime) return aTime - bTime;
                 }
                 return Number($(a).attr('data-orig-order') || 0) - Number($(b).attr('data-orig-order') || 0);
             });
@@ -7788,6 +7848,7 @@ var GuestRateCalculator = (function($) {
         calculateResults: calculateResults,
         calculateDualRecipe: calculateDualRecipe,
         calculateFields: calculateFields,
+        calculateActualGuestRate: calculateActualGuestRate,
         updateSummaryDisplay: updateSummaryDisplay,
         isGuestRateMode: isGuestRateMode,
         analyzeChefGuestRateSkills: analyzeChefGuestRateSkills,
@@ -7799,6 +7860,7 @@ var GuestRateCalculator = (function($) {
         refreshAllRecipeConflictDetection: refreshAllRecipeConflictDetection,
         addRuneAndGuestInfoToRecipeOption: addRuneAndGuestInfoToRecipeOption,
         getFilteredAndSortedChefs: getFilteredAndSortedChefs,
+        syncSelectedRecipeQuantitiesFromGuestRateControls: syncSelectedRecipeQuantitiesFromGuestRateControls,
         // 碰瓷查询模块
         initPengciGuestSelect: initPengciGuestSelect,
         populatePengciGuestOptions: populatePengciGuestOptions,

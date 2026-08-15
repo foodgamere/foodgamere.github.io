@@ -576,9 +576,9 @@ var OneClickQuery = (function($) {
      * 贵客率公式（来自 guest.calculator.js）：
      * - 1星: actualRate = (0.05 + (quantity - 20) * 0.013) * (100 + baseGuestRate)
      * - 2星: actualRate = (0.08 + (quantity - 15) * 0.02) * (100 + baseGuestRate)
-     * - 3星: actualRate = (0.083 + (quantity - 12) * 0.016) * (100 + baseGuestRate)
-     * - 4星: actualRate = (0.1142 + (quantity - 10) * 0.0059) * (100 + baseGuestRate)
-     * - 5星: actualRate = (0.1006 + (quantity - 7) * 0.0084) * (100 + baseGuestRate)
+     * - 3星: actualRate = (0.08 + (quantity - 12) * 0.0162) * (100 + baseGuestRate)
+     * - 4星: actualRate = (0.05 + (quantity - 10) * 0.01) * (100 + baseGuestRate)
+     * - 5星: actualRate = (0.1 + (quantity - 7) * 0.0085) * (100 + baseGuestRate)
      * 
      * 反推公式（令 actualRate = 100）：
      * quantity = (100 / (100 + baseGuestRate) - baseCoeff) / stepCoeff + baseQuantity
@@ -592,9 +592,9 @@ var OneClickQuery = (function($) {
         var formulaParams = {
             1: { baseCoeff: 0.05, stepCoeff: 0.013, baseQuantity: 20 },
             2: { baseCoeff: 0.08, stepCoeff: 0.02, baseQuantity: 15 },
-            3: { baseCoeff: 0.083, stepCoeff: 0.016, baseQuantity: 12 },
-            4: { baseCoeff: 0.1142, stepCoeff: 0.0059, baseQuantity: 10 },
-            5: { baseCoeff: 0.1006, stepCoeff: 0.0084, baseQuantity: 7 }
+            3: { baseCoeff: 0.08, stepCoeff: 0.0162, baseQuantity: 12 },
+            4: { baseCoeff: 0.05, stepCoeff: 0.01, baseQuantity: 10 },
+            5: { baseCoeff: 0.1, stepCoeff: 0.0085, baseQuantity: 7 }
         };
         
         var params = formulaParams[starLevel];
@@ -4595,12 +4595,21 @@ var OneClickQuery = (function($) {
                 
                 // 计算应该使用的份数
                 var isQueryEfficiencyMode = settings.queryMode;
-                var defaultStarLevel = 5;
-                var calculatedQuantity = 7; // 默认7份
+                var defaultStarLevel = parseInt($('#star-level').val(), 10) || 5;
+                var defaultQualityLevel = $('#quality-level').val() || '1';
+                var calculatedQuantity = MIN_QUANTITY_MAP[defaultStarLevel] || 7;
+                var currentGuestRate = bestGroupStats ? Number(bestGroupStats.guestRate) : NaN;
+                if (!isFinite(currentGuestRate) && typeof GuestRateCalculator !== 'undefined' && GuestRateCalculator.calculateFields && rule.custom) {
+                    var currentFields = GuestRateCalculator.calculateFields(rule.custom, rule, defaultStarLevel, calculatedQuantity, defaultQualityLevel);
+                    currentGuestRate = Number(currentFields && currentFields.guestRate);
+                }
+                if (!isFinite(currentGuestRate)) {
+                    currentGuestRate = parseFloat(String($('#guest-rate-value').text() || '').replace('%', '')) || 0;
+                }
                 
-                if (!isQueryEfficiencyMode && bestGroupStats) {
+                if (!isQueryEfficiencyMode) {
                     // 查询必来模式：根据贵客率计算必来份数
-                    var requiredPortions = getRequiredPortionsForStarLevel(bestGroupStats.guestRate, defaultStarLevel);
+                    var requiredPortions = getRequiredPortionsForStarLevel(currentGuestRate, defaultStarLevel);
                     var maxQuantity = getUserMaxQuantity(defaultStarLevel); // 获取用户实际最大份数（含修炼加成）
                     calculatedQuantity = Math.min(requiredPortions, maxQuantity);
                     
@@ -4660,7 +4669,8 @@ var OneClickQuery = (function($) {
                 result.totalTimeBonus = totalTimeBonus;
                 result.totalCookingTime = 0;
                 result.timeReached = false;
-                result.qualityLevel = bestGroupStats ? bestGroupStats.qualityLevel : "4";
+                result.qualityLevel = bestGroupStats ? bestGroupStats.qualityLevel : defaultQualityLevel;
+                result.calculatedStarLevel = defaultStarLevel;
                 result.calculatedQuantity = calculatedQuantity; // 添加计算出的份数
                 
                 // 标记是否无法达到必来（从bestGroupStats继承）
@@ -6275,6 +6285,40 @@ var OneClickQuery = (function($) {
         html += '</div>';
         return html;
     }
+
+    // 查询模式切换后，立即按当前星级和场上贵客率更新主份数。
+    function updateCurrentQueryModeQuantity(skipRecalculate) {
+        if (typeof calCustomRule === 'undefined' || !calCustomRule || calCustomRule.isGuestRate !== true || !calCustomRule.rules || !calCustomRule.rules.length) {
+            return;
+        }
+
+        var starLevel = parseInt($('#star-level').val(), 10) || 5;
+        var qualityLevel = $('#quality-level').val() || '1';
+        var quantity = MIN_QUANTITY_MAP[starLevel] || 7;
+        var custom = calCustomRule.rules[0].custom;
+        var rule = calCustomRule.rules[0];
+        var baseGuestRate = NaN;
+
+        if (custom && typeof GuestRateCalculator !== 'undefined' && GuestRateCalculator.calculateFields) {
+            var fields = GuestRateCalculator.calculateFields(custom, rule, starLevel, quantity, qualityLevel);
+            baseGuestRate = Number(fields && fields.guestRate);
+        }
+        if (!isFinite(baseGuestRate)) {
+            baseGuestRate = parseFloat(String($('#guest-rate-value').text() || '').replace('%', '')) || 0;
+        }
+
+        if (!settings.queryMode) {
+            quantity = getRequiredPortionsForStarLevel(baseGuestRate, starLevel);
+        }
+
+        $('#quantity-value, #quantity-value-jade').val(quantity);
+        if (typeof GuestRateCalculator !== 'undefined' && GuestRateCalculator.syncSelectedRecipeQuantitiesFromGuestRateControls) {
+            GuestRateCalculator.syncSelectedRecipeQuantitiesFromGuestRateControls();
+        }
+        if (!skipRecalculate && typeof calCustomResults === 'function') {
+            calCustomResults();
+        }
+    }
     
     /**
      * 创建符文选择区域HTML
@@ -6320,6 +6364,7 @@ var OneClickQuery = (function($) {
             
             if (id === 'queryMode') {
                 $('#queryModeLabel').text(checked ? '查询效率' : '查询必来');
+                updateCurrentQueryModeQuantity();
             } else if (id === 'singleRecipePerRune') {
                 $('#singleRecipePerRuneLabel').text(checked ? '每种只查一个' : '符文平均分配');
             }
@@ -6793,6 +6838,7 @@ var OneClickQuery = (function($) {
         calculateRecipeQuantity: calculateRecipeQuantity,
         calculateCookingTime: calculateCookingTime,
         getRequiredPortionsForStarLevel: getRequiredPortionsForStarLevel,
+        updateCurrentQueryModeQuantity: updateCurrentQueryModeQuantity,
         getUserMaxQuantity: getUserMaxQuantity, // 获取用户实际最大份数
         // 常量
         GOLD_RUNES: GOLD_RUNES,
