@@ -3721,6 +3721,13 @@ table.dataTable tr.selected td.select-checkbox:after,table.dataTable tr.selected
     max-width: 96px !important;
 }
 
+#jade-ranking-table-modal .jade-ranking-fire-filter-wrapper .bootstrap-select,
+#jade-ranking-table-modal .jade-ranking-fire-filter-wrapper .btn-group.bootstrap-select {
+    width: 72px !important;
+    min-width: 72px !important;
+    max-width: 72px !important;
+}
+
 #jade-ranking-table-modal .jade-ranking-filter-wrapper .dropdown-toggle {
     height: 30px;
     padding: 4px 24px 4px 10px;
