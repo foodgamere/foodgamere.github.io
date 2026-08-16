@@ -1156,9 +1156,6 @@ var BanquetOptimizer = (function() {
             recipeRarity: $("#chk-cal-recipe-rarity").val() || [],
             recipeSkill: $("#chk-cal-recipe-skill").val() || [],
             multipleSkill: $("#chk-cal-recipe-multiple-skill").prop("checked"),
-            excludeMaterialRules: typeof window.getExcludeMaterialRules === 'function'
-                ? window.getExcludeMaterialRules("#chk-cal-recipe-material-exclude")
-                : [],
             useNewbieEquip: $("#chk-banquet-newbie-equip").length
                 ? $("#chk-banquet-newbie-equip").prop("checked")
                 : (typeof window.getBanquetNewbieEquipEnabled === 'function' && !!window.getBanquetNewbieEquipEnabled()),
@@ -1221,9 +1218,6 @@ var BanquetOptimizer = (function() {
                         }
                         if (!skillPass) continue;
                     }
-                    // 排除食材只用于排除候选菜谱，不作为风云宴全局库存限制。
-                    if (typeof window.isRecipeExcludedByMaterialRules === 'function'
-                        && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                     menus.push(rd);
                     _recipeMap[rd.recipeId] = rd;
                 }
