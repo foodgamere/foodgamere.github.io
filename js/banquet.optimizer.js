@@ -9,7 +9,7 @@
  * === 输入、约束和计分 ===
  * 1. init() 从 calCustomRule.rules 与页面筛选项建立厨师/菜谱索引：
  *    - 可按贵客过滤；单贵客模式会下调部分搜索预算。
- *    - 菜谱会按拥有状态、稀有度和技法预过滤；宴会不使用厨神大赛的排除食材规则。
+ *    - 菜谱会按拥有状态、稀有度、技法及排除食材预过滤。
  *    - 搜索中菜谱全局不重复，厨师在已处理位置中不重复；宴会不存在跨菜谱
  *      食材配额，每道菜均按当前 rule 的完整食材计算份数，并遵守 DisableMultiCookbook。
  *    - 可选的新手/中级奖池厨具会参与菜谱排序和最终自动搭配。
@@ -1156,6 +1156,9 @@ var BanquetOptimizer = (function() {
             recipeRarity: $("#chk-cal-recipe-rarity").val() || [],
             recipeSkill: $("#chk-cal-recipe-skill").val() || [],
             multipleSkill: $("#chk-cal-recipe-multiple-skill").prop("checked"),
+            excludeMaterialRules: typeof window.getExcludeMaterialRules === 'function'
+                ? window.getExcludeMaterialRules("#chk-cal-recipe-material-exclude")
+                : [],
             useNewbieEquip: $("#chk-banquet-newbie-equip").length
                 ? $("#chk-banquet-newbie-equip").prop("checked")
                 : (typeof window.getBanquetNewbieEquipEnabled === 'function' && !!window.getBanquetNewbieEquipEnabled()),
@@ -1218,6 +1221,9 @@ var BanquetOptimizer = (function() {
                         }
                         if (!skillPass) continue;
                     }
+                    // 排除食材只用于排除候选菜谱，不作为风云宴全局库存限制。
+                    if (typeof window.isRecipeExcludedByMaterialRules === 'function'
+                        && window.isRecipeExcludedByMaterialRules(rd.materials, _cachedConfig.excludeMaterialRules)) continue;
                     menus.push(rd);
                     _recipeMap[rd.recipeId] = rd;
                 }
