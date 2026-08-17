@@ -571,7 +571,7 @@ var OneClickQuery = (function($) {
      * - 1星: actualRate = (0.05 + (quantity - 20) * 0.013) * (100 + baseGuestRate)
      * - 2星: actualRate = (0.08 + (quantity - 15) * 0.02) * (100 + baseGuestRate)
      * - 3星: actualRate = (0.08 + (quantity - 12) * 0.0162) * (100 + baseGuestRate)
-     * - 4星: actualRate = (0.05 + (quantity - 10) * 0.01) * (100 + baseGuestRate)
+     * - 4星: actualRate = (0.1 + (quantity - 10) * 0.01) * (100 + baseGuestRate)
      * - 5星: actualRate = (0.1 + (quantity - 7) * 0.0085) * (100 + baseGuestRate)
      * 
      * 反推公式（令 actualRate = 100）：
@@ -587,7 +587,7 @@ var OneClickQuery = (function($) {
             1: { baseCoeff: 0.05, stepCoeff: 0.013, baseQuantity: 20 },
             2: { baseCoeff: 0.08, stepCoeff: 0.02, baseQuantity: 15 },
             3: { baseCoeff: 0.08, stepCoeff: 0.0162, baseQuantity: 12 },
-            4: { baseCoeff: 0.05, stepCoeff: 0.01, baseQuantity: 10 },
+            4: { baseCoeff: 0.1, stepCoeff: 0.01, baseQuantity: 10 },
             5: { baseCoeff: 0.1, stepCoeff: 0.0085, baseQuantity: 7 }
         };
         
