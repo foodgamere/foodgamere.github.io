@@ -3297,6 +3297,7 @@ var GuestRateCalculator = (function($) {
     var globalChefCategory = null;
     var globalEquipCategory = null;
     var globalRecipeCategory = null;
+    var globalRecipeRarityFilter = '';
     
     // 全局变量：保存符文分组的展开/收起状态
     var runeGroupExpandState = {};
@@ -3365,12 +3366,22 @@ var GuestRateCalculator = (function($) {
                     '<li><a href="#" class="tab-all">全部</a></li>' +
                     '</ul>';
             } else if (selectorType === 'recipe') {
-                // 菜谱：金符文、银符文、铜符文、全部
+                // 菜谱：金符文、银符文、铜符文、全部，以及公共火数筛选
                 tabsHtml = '<ul class="nav nav-tabs ' + tabsClass + '">' +
                     '<li class="active"><a href="#" class="tab-gold" data-category="gold-rune-category">金符文</a></li>' +
                     '<li><a href="#" class="tab-silver" data-category="silver-rune-category">银符文</a></li>' +
                     '<li><a href="#" class="tab-bronze" data-category="bronze-rune-category">铜符文</a></li>' +
                     '<li><a href="#" class="tab-all">全部</a></li>' +
+                    '<li class="recipe-rarity-filter-item">' +
+                        '<select class="selectpicker recipe-rarity-filter" data-width="76px" data-style="btn-default btn-sm" aria-label="筛选菜谱火数">' +
+                            '<option value="">全部</option>' +
+                            '<option value="5">5火</option>' +
+                            '<option value="4">4火</option>' +
+                            '<option value="3">3火</option>' +
+                            '<option value="2">2火</option>' +
+                            '<option value="1">1火</option>' +
+                        '</select>' +
+                    '</li>' +
                     '</ul>';
             }
             
@@ -3382,6 +3393,47 @@ var GuestRateCalculator = (function($) {
                 } else {
                     $dropdown.prepend(tabsHtml);
                 }
+            }
+
+            if (selectorType === 'recipe') {
+                var $rarityFilter = $dropdown.find('select.recipe-rarity-filter');
+                if (!$rarityFilter.data('selectpicker')) {
+                    $rarityFilter.selectpicker();
+                }
+                $rarityFilter.val(globalRecipeRarityFilter).selectpicker('refresh');
+
+                var $rarityPicker = $rarityFilter.parent('.bootstrap-select');
+                $rarityPicker.off('.recipeRarity');
+                $rarityPicker.on('mousedown.recipeRarity click.recipeRarity', function(e) {
+                    e.stopPropagation();
+                });
+                $rarityPicker.children('.dropdown-toggle').off('click.recipeRarityToggle').on('click.recipeRarityToggle', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    var shouldOpen = !$rarityPicker.hasClass('open');
+                    $('.recipe-rarity-filter-item > .bootstrap-select.open').removeClass('open')
+                        .children('.dropdown-toggle').attr('aria-expanded', 'false');
+                    $rarityPicker.toggleClass('open', shouldOpen);
+                    $(this).attr('aria-expanded', shouldOpen ? 'true' : 'false');
+                });
+                $rarityFilter.off('change.recipeRarity').on('change.recipeRarity', function(e) {
+                    e.stopPropagation();
+                    globalRecipeRarityFilter = String($(this).val() || '');
+                    $('select.recipe-rarity-filter').each(function() {
+                        var $filter = $(this);
+                        $filter.val(globalRecipeRarityFilter);
+                        if ($filter.data('selectpicker')) {
+                            $filter.selectpicker('refresh');
+                        }
+                    });
+                    $rarityPicker.removeClass('open').children('.dropdown-toggle').attr('aria-expanded', 'false');
+
+                    var categoryState = globalRecipeCategory || {
+                        category: 'gold-rune-category',
+                        sortKey: 'recipeTime'
+                    };
+                    filterAndSortRecipes($select, currentOptionsHtml, categoryState.category, categoryState.sortKey);
+                });
             }
             
             // 绑定标签点击事件
@@ -3528,8 +3580,8 @@ var GuestRateCalculator = (function($) {
         // 1) 恢复原始的 option 列表
         $select.html(originalHtml);
         
-        // 2) 过滤：移除不符合分类的 option
-        if (categoryName) {
+        // 2) 过滤：分类和公共火数筛选叠加生效
+        if (categoryName || globalRecipeRarityFilter) {
             $select.find('option').each(function() {
                 var $opt = $(this);
                 var cat = $opt.attr('data-category') || '';
@@ -3539,9 +3591,10 @@ var GuestRateCalculator = (function($) {
                     return;
                 }
                 
-                // 检查是否匹配分类
-                var shouldShow = cat && cat.indexOf(categoryName) >= 0;
-                if (!shouldShow) {
+                var matchesCategory = !categoryName || (cat && cat.indexOf(categoryName) >= 0);
+                var matchesRarity = !globalRecipeRarityFilter ||
+                    String($opt.attr('data-rarity') || '') === globalRecipeRarityFilter;
+                if (!matchesCategory || !matchesRarity) {
                     $opt.remove();
                 }
             });

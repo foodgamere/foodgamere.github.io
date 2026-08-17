@@ -1166,6 +1166,25 @@ table.history-table tr td.history-dt {
     margin: 0 !important;
 }
 
+.dropdown-menu .recipe-category-tabs .recipe-rarity-filter-item {
+    flex: 0 0 76px !important;
+    display: flex !important;
+    align-items: center;
+    padding-left: 6px;
+}
+
+.dropdown-menu .recipe-category-tabs .recipe-rarity-filter-item > .bootstrap-select {
+    width: 76px !important;
+}
+
+.dropdown-menu .recipe-category-tabs .recipe-rarity-filter-item > .bootstrap-select > .dropdown-toggle {
+    display: inline-flex !important;
+    height: 30px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    font-size: 12px;
+}
+
 .dropdown-menu .chef-category-tabs li a,
 .dropdown-menu .equip-category-tabs li a,
 .dropdown-menu .recipe-category-tabs li a,
